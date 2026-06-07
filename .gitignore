@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# uv lockfile — not committed (results don't depend on pinned tool versions;
+# `uv sync` re-resolves from pyproject.toml)
+uv.lock
+
+# Profiling / call-graph dev output (regenerate via scripts/callgraph_fxp.py)
+*.cprof
+viz/
+scripts/callgraph_fxp*.dot
+scripts/callgraph_fxp*.png
+scripts/callgraph_fxp*.svg
+
+# Generated experiment outputs (regenerate by running the scripts).
+# The pgfplots templates under experiments/figures/latex/ are tracked.
+experiments/figures/*.png
+experiments/figures/*.pdf
+experiments/tables/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Local tooling config
+.claude/

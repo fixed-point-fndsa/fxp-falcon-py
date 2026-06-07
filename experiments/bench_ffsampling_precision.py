@@ -1,0 +1,577 @@
+"""
+Precision benchmark for ffsampling — self-consistent per format.
+
+For each of {FP float64, FxP-63, FxP-127}, we do:
+  - Build the Gram in its native precision (exact integer Gram for fxp;
+    float for FP; mpmath-256 for the ground truth).
+  - Build the ffLDL tree at that precision.
+  - Run ffsampling at that precision.
+
+Ground truth is a full mpmath-256 pipeline (Gram, ffLDL, ffsampling).
+
+**Target convention**: this benchmark uses the *standard* (non-tweaked)
+target `t = (-c·F/q, c·f/q)` computed in FFT domain by pointwise
+multiplication of FFT(c) with FFT(±F), FFT(f) and division by q.
+FFT-domain magnitudes reach `n·γ_FG ≈ 2^20.93`, so we use `m_sign = 21`
+throughout. This is the path the Section-5.1 tweak deliberately
+avoids; running it here lets us measure the precision impact of those
+larger magnitudes (vs. `m_sign = 18` in the tweak path, where
+`‖t̂‖_∞ ≤ n/2 = 2^8`).
+
+Per level i of ffsampling, we record per-coefficient
+`|t_0'(i) − t_0'_mpmath(i)|` and aggregate as both the **mean**
+(typical case) and the **max** (observed worst case) across all
+(trial × coefficient) pairs at that level.
+"""
+
+import math
+import random
+import time
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import mpmath
+
+HERE = Path(__file__).resolve().parent
+
+import _path_setup  # noqa: F401, E402  (sets up sys.path)
+
+from _outputs import save_fig, write_csv  # noqa: E402
+
+from falcon import SecretKey  # noqa: E402
+from fft import neg  # noqa: E402
+from ffsampling import gram as gram_float  # noqa: E402
+from rng import ChaCha20  # noqa: E402
+from common import q as FALCON_Q  # noqa: E402
+from samplerz import samplerz as samplerz_ref  # noqa: E402
+
+from fxtypes import FxR, FxC, RootGram  # noqa: E402
+from fft_fxp import (  # noqa: E402
+    add_fft_fxp, sub_fft_fxp, mul_fft_fxp, split_complex_fxp, merge_fft_fxp,
+    fft_fxp, adj_fft_fxp, retag_poly_fxc,
+)
+from ffldl_fxp import keygen_fxp  # noqa: E402
+from ntrugen_filters import (  # noqa: E402
+    GAMMA_FG_512, GAMMA_HYBRID, GAMMA_ROOT,
+    norm_fft_fg, alpha_hybrid_squared, norm_fft_k,
+)
+
+# `_renormalize_poly` was renamed to `retag_poly_fxc` and moved to fft_fxp;
+# alias kept here so the experiment reads as before.
+_renormalize_poly = retag_poly_fxc
+
+
+def _filtered_sk(n):
+    """A SecretKey whose basis passes the FULL NTRUGen filter — γ_fg
+    (Check 1b), γ_hybrid (Check 2), γ_root (Check 4). Stock `SecretKey`
+    enforces only gs_norm, so we reject and regenerate until all checks
+    pass. This matches the deployed fxp pipeline, so keygen_fxp's fixed
+    budgets (M_L10_ROOT=5, M_L10_INNER=0, M_D=18) hold with no overflow.
+    """
+    while True:
+        sk = SecretKey(n)
+        f, g, F, G = sk.f, sk.g, sk.F, sk.G
+        if norm_fft_fg(f, g) > GAMMA_FG_512:
+            continue
+        if alpha_hybrid_squared(f, g) > GAMMA_HYBRID**2:
+            continue
+        if norm_fft_k(f, g, F, G) > GAMMA_ROOT:
+            continue
+        return sk
+
+# mpmath pipeline (reuse from ffldl bench).
+from bench_ffldl_precision import (  # noqa: E402
+    _mp_fft, _mp_split_fft, _mp_merge_fft, _mp_adj,
+    _mp_ffldl_fft as _mp_ffldl_inner,
+)
+
+mpmath.mp.prec = 256
+
+
+# --------------------------------------------------------------------- #
+# Exact integer Gram + mpmath FFT.
+# --------------------------------------------------------------------- #
+
+
+def _gram_int_then_mp_fft(sk):
+    """Compute the Gram at high precision: start from exact integer Gram in
+    coefficient domain, then FFT in mpmath."""
+    B0 = [[sk.g, neg(sk.f)], [sk.G, neg(sk.F)]]
+    Gram_float = gram_float(B0)  # integer-valued floats
+    Gram_int = [[[int(round(c)) for c in Gram_float[i][j]] for j in range(2)]
+                for i in range(2)]
+    G_mp = [[_mp_fft(Gram_int[i][j]) for j in range(2)] for i in range(2)]
+    return G_mp
+
+
+def _mp_to_fxc(poly_mp, m, p):
+    """Quantize an mpmath complex poly to FxC at (m, p)."""
+    scale = mpmath.mpf(2) ** (p - m)
+    out = []
+    for z in poly_mp:
+        x_re = int(mpmath.nint(z.real * scale))
+        x_im = int(mpmath.nint(z.imag * scale))
+        out.append(FxC(re=FxR(x=x_re, m=m, p=p),
+                       im=FxR(x=x_im, m=m, p=p)))
+    return out
+
+
+def _mp_to_complex(poly_mp):
+    return [complex(float(z.real), float(z.imag)) for z in poly_mp]
+
+
+def _tight_m_mp(max_abs_mp):
+    return max(1, int(math.ceil(float(mpmath.log(max_abs_mp, 2)))) + 1)
+
+
+def build_fxp_tree_at_p_selfconsistent(sk, p, m_sign):
+    """Fully self-consistent fxp pipeline at precision p: integer basis,
+    FFT_fxp at p, polynomial-matrix multiply at p, ffLDL at p."""
+    B = [[sk.g, [-c for c in sk.f]],
+         [sk.G, [-c for c in sk.F]]]
+
+    max_coef = max(max(abs(c) for c in B[i][j]) for i in range(2) for j in range(2))
+    m_B = max(1, int(math.ceil(math.log2(max_coef + 1))) + 1)
+
+    # Integer -> FxR at (m_B, p), exact embedding.
+    B_fxr = [[[FxR.from_int(int(c), m=m_B, p=p) for c in B[i][j]] for j in range(2)]
+             for i in range(2)]
+    # fft_fxp per block.
+    B_fft = [[fft_fxp(B_fxr[i][j]) for j in range(2)] for i in range(2)]
+
+    # RootGram (g00, g10): G[i][j] = sum_k B[i][k]·adj(B[j][k]). The diagonal
+    # G_00 is Hermitian-real (PolyR); G_11 recovered by the root LDL via q²/D_00.
+    def _block(i, j):
+        return add_fft_fxp(mul_fft_fxp(B_fft[i][0], adj_fft_fxp(B_fft[j][0])),
+                           mul_fft_fxp(B_fft[i][1], adj_fft_fxp(B_fft[j][1])))
+    G_fxp = RootGram(g00=[z.re for z in _block(0, 0)], g10=_block(1, 0))
+
+    inv_sigma_fxr = FxR.from_float(1.0 / sk.sigma, m=-7, p=p)   # 1/σ (INV_SIGMA)
+    sigmin_fxr = FxR.from_float(sk.sigmin, m=1, p=p)            # σ_min (for ccs_i)
+    # Budgets fixed inside keygen_fxp (M_L10_ROOT=5, M_L10_INNER=0, M_D=18);
+    # valid because `sk` passes the full NTRUGen filter (see _filtered_sk).
+    return keygen_fxp(
+        G_fxp, q=FALCON_Q, inv_sigma=inv_sigma_fxr, sigmin=sigmin_fxr,
+        iters=6,  # safe default for both p=63 and p=127 (see ffldl_fxp.rsqrt)
+    )
+
+
+def build_fp_tree(sk):
+    """Reference float tree (same as sk.T_fft)."""
+    return sk.T_fft
+
+
+def build_mp_tree(G_mp, sk, q):
+    """Build the ffLDL tree in mpmath with the same structure as our fxp tree
+    (ntru_root at the top, inner uses G_11 - adj(L_10)*G_10 + renorm)."""
+    n = len(G_mp[0][0])
+    G00, G10 = G_mp[0][0], G_mp[1][0]
+    L10 = [G10[i] / G00[i] for i in range(n)]
+    D00 = list(G00)
+    q_sq = mpmath.mpf(q) ** 2
+    D11 = [q_sq / G00[i] for i in range(n)]
+    if n > 2:
+        d00, d01 = _mp_split_fft(D00)
+        d10, d11 = _mp_split_fft(D11)
+        G0 = [[d00, d01], [_mp_adj(d01), d00]]
+        G1 = [[d10, d11], [_mp_adj(d11), d10]]
+        return [L10, _mp_ffldl_inner(G0), _mp_ffldl_inner(G1)]
+    return [L10, D00, D11]
+
+
+def mp_normalize_tree(tree, sigma_mp):
+    """Normalize the mpmath ffLDL tree by replacing leaves with [sigma/sqrt(D_ii), 0]."""
+    if isinstance(tree[1][0], list):
+        mp_normalize_tree(tree[1], sigma_mp)
+        mp_normalize_tree(tree[2], sigma_mp)
+    else:
+        for idx in (1, 2):
+            poly = tree[idx]
+            val = sigma_mp / mpmath.sqrt(poly[0].real)
+            tree[idx] = [val, mpmath.mpc(0)]
+
+
+# --------------------------------------------------------------------- #
+# Input t construction at each precision.
+# --------------------------------------------------------------------- #
+
+
+def build_t_at_all_precisions(sk, c, p_fxp_list, m_sign):
+    """Return (t_fp, t_mp, {p: t_fxp}) where t is the **standard** target
+
+        t = (−c·F/q,  c·f/q)
+
+    computed in FFT domain by pointwise multiplication of FFT(c) with
+    FFT(±F), FFT(f) and division by q. This is the path the tweak
+    deliberately avoids (because the FFT-domain magnitudes here reach
+    `n·γ_FG ≈ 2^20.93`, vs `n/2 = 2^8` for `t_frac`); we run it here
+    precisely to measure the precision impact of operating on those
+    larger magnitudes.
+
+    `m_sign` should be 21 in the standard path (vs 18 with the tweak).
+    """
+    q = FALCON_Q
+    n = len(c)
+
+    # ----- mpmath ground truth: integer FFTs, then pointwise mul/div. -----
+    c_mp_fft = _mp_fft(list(c))
+    F_mp_fft = _mp_fft(list(sk.F))
+    f_mp_fft = _mp_fft(list(sk.f))
+    q_mp = mpmath.mpf(q)
+    t0_mp = [(-c_mp_fft[i] * F_mp_fft[i]) / q_mp for i in range(n)]
+    t1_mp = [( c_mp_fft[i] * f_mp_fft[i]) / q_mp for i in range(n)]
+    t_mp = [t0_mp, t1_mp]
+
+    # ----- Float version: downcast from mpmath (= what the float pipeline
+    # would compute, modulo the float-domain operation order; downcasting
+    # the mpmath result is the cleanest way to feed the same starting
+    # point to all three pipelines without picking up extra float64
+    # round-off in `t` itself before the walker even starts). -----
+    t_fp = [_mp_to_complex(t0_mp), _mp_to_complex(t1_mp)]
+
+    # ----- Self-consistent FxP at each p: integer → FxR at coef-domain
+    # tight m, fft_fxp, pointwise mul, then ·(1/q) to reach m_sign. Mirrors
+    # `target_construction._build_t_standard_fxp` but parametric on p. -----
+    # |c_i| < q < 2^14 (point is unsigned hash output in [0, q-1]).
+    M_POINT_COEF = 14
+    # |f_i|, |F_i| ≤ γ_FG = 3500 < 2^11.78 < 2^13. Conservative m=13 keeps
+    # one bit of headroom for the FxR invariant.
+    M_B0_COEF = 13
+    from fxtypes import FxC, retag_value_fxc  # local: bench-only dep
+    t_fxps = {}
+    for p in p_fxp_list:
+        c_fxc = fft_fxp([FxR.from_int(int(ci), m=M_POINT_COEF, p=p) for ci in c])
+        F_fxc = fft_fxp([FxR.from_int(int(F_i), m=M_B0_COEF, p=p) for F_i in sk.F])
+        f_fxc = fft_fxp([FxR.from_int(int(f_i), m=M_B0_COEF, p=p) for f_i in sk.f])
+        inv_q = FxC(re=FxR.from_float(1.0 / q, m=-13, p=p),
+                    im=FxR(x=0, m=-13, p=p))
+        # c·F at m = M_POINT_COEF + M_B0_COEF + 2·(log2(n)−1); ·inv_q + retag
+        # brings down to m_sign. Same pattern for c·f.
+        t0 = [retag_value_fxc(-(ci * Fi) * inv_q, m_sign)
+              for ci, Fi in zip(c_fxc, F_fxc)]
+        t1 = [retag_value_fxc((ci * fi) * inv_q, m_sign)
+              for ci, fi in zip(c_fxc, f_fxc)]
+        t_fxps[p] = [t0, t1]
+    return t_fp, t_mp, t_fxps
+
+
+# --------------------------------------------------------------------- #
+# Float ffsampling helpers (reference primitives).
+# --------------------------------------------------------------------- #
+
+
+def _split_float(f):
+    from fft import split_fft
+    return list(split_fft(f))
+
+
+def _merge_float(f_list):
+    from fft import merge_fft
+    return merge_fft(f_list)
+
+
+# --------------------------------------------------------------------- #
+# Parallel walker: FP, FxP (arbitrary p), mpmath; records error per level.
+# --------------------------------------------------------------------- #
+
+
+def _retag_m(a_fxr, m_new):
+    from fxtypes import _bankers_shift
+    if m_new == a_fxr.m:
+        return a_fxr
+    if m_new > a_fxr.m:
+        return FxR(x=_bankers_shift(a_fxr.x, m_new - a_fxr.m), m=m_new, p=a_fxr.p)
+    return FxR(x=a_fxr.x << (a_fxr.m - m_new), m=m_new, p=a_fxr.p)
+
+
+def _walker(t_fp, t_fxp, t_mp, tree_fp, tree_fxp, tree_mp,
+            sigmin_fp, rng_fp, rng_fxp, rng_mp,
+            errors, level, m_sign):
+    n = len(t_fp[0])
+    if n == 1:
+        # Leaf.
+        sigma_fp = tree_fp[0]
+        sigma_mp = tree_mp[0]
+        mu0_fp = t_fp[0][0].real
+        mu1_fp = t_fp[1][0].real
+        z0 = samplerz_ref(mu0_fp, sigma_fp, sigmin_fp, rng_fp.randombytes)
+        z1 = samplerz_ref(mu1_fp, sigma_fp, sigmin_fp, rng_fp.randombytes)
+        # Drain the other rngs by a matching amount (same call, same inputs).
+        _ = samplerz_ref(
+            t_fxp[0][0].re.to_float(), tree_fxp[0].to_float(), sigmin_fp,
+            rng_fxp.randombytes,
+        )
+        _ = samplerz_ref(
+            t_fxp[1][0].re.to_float(), tree_fxp[0].to_float(), sigmin_fp,
+            rng_fxp.randombytes,
+        )
+        _ = samplerz_ref(float(t_mp[0][0].real), float(sigma_mp.real), sigmin_fp,
+                          rng_mp.randombytes)
+        _ = samplerz_ref(float(t_mp[1][0].real), float(sigma_mp.real), sigmin_fp,
+                          rng_mp.randombytes)
+        p_used = t_fxp[0][0].re.p
+        z_fp_poly = ([complex(z0, 0)], [complex(z1, 0)])
+        z_fxp_poly = [
+            [FxC(re=FxR.from_int(z0, m=m_sign, p=p_used),
+                 im=FxR(x=0, m=m_sign, p=p_used))],
+            [FxC(re=FxR.from_int(z1, m=m_sign, p=p_used),
+                 im=FxR(x=0, m=m_sign, p=p_used))],
+        ]
+        z_mp_poly = ([mpmath.mpc(z0, 0)], [mpmath.mpc(z1, 0)])
+        return z_fp_poly, z_fxp_poly, z_mp_poly
+
+    ell_fp = tree_fp[0]
+    ell_fxp = tree_fxp[0]
+    ell_mp = tree_mp[0]
+    tree_fp_0, tree_fp_1 = tree_fp[1], tree_fp[2]
+    tree_fxp_0, tree_fxp_1 = tree_fxp[1], tree_fxp[2]
+    tree_mp_0, tree_mp_1 = tree_mp[1], tree_mp[2]
+
+    # Right recursion on t[1].
+    t1_split_fp = _split_float(t_fp[1])
+    t1_split_fxp = [_renormalize_poly(p_, m_sign) for p_ in split_complex_fxp(t_fxp[1])]
+    t1_split_mp = list(_mp_split_fft(t_mp[1]))
+
+    z_fp_right, z_fxp_right, z_mp_right = _walker(
+        t1_split_fp, t1_split_fxp, t1_split_mp,
+        tree_fp_1, tree_fxp_1, tree_mp_1,
+        sigmin_fp, rng_fp, rng_fxp, rng_mp,
+        errors, level + 1, m_sign,
+    )
+
+    z1_fp = _merge_float(z_fp_right)
+    z1_fxp = _renormalize_poly(merge_fft_fxp(z_fxp_right), m_sign)
+    z1_mp = _mp_merge_fft(*z_mp_right)
+
+    # t_0' = t_0 + (t_1 - z_1) * ell.
+    diff_fp = [t_fp[1][i] - z1_fp[i] for i in range(n)]
+    prod_fp = [diff_fp[i] * ell_fp[i] for i in range(n)]
+    t0p_fp = [t_fp[0][i] + prod_fp[i] for i in range(n)]
+
+    diff_fxp = sub_fft_fxp(t_fxp[1], z1_fxp)
+    prod_fxp = _renormalize_poly(mul_fft_fxp(diff_fxp, ell_fxp), m_sign)
+    t0p_fxp = add_fft_fxp(t_fxp[0], prod_fxp)
+
+    diff_mp = [t_mp[1][i] - z1_mp[i] for i in range(n)]
+    prod_mp = [diff_mp[i] * ell_mp[i] for i in range(n)]
+    t0p_mp = [t_mp[0][i] + prod_mp[i] for i in range(n)]
+
+    # Record per-coefficient errors at this level. We append every
+    # |t0p[i] - t0p_mp[i]| so the driver can later compute BOTH the mean
+    # and the max-over-(coeff, trial). Earlier versions stored only the
+    # per-call max, which conflated "median of per-trial-max" with
+    # "true mean error" — see experiments/README.md for the distinction.
+    for i in range(n):
+        e_fp = float(mpmath.sqrt(
+            (mpmath.mpf(t0p_fp[i].real) - t0p_mp[i].real) ** 2
+            + (mpmath.mpf(t0p_fp[i].imag) - t0p_mp[i].imag) ** 2
+        ))
+        e_fxp = float(mpmath.sqrt(
+            (mpmath.mpf(t0p_fxp[i].re.x) * mpmath.mpf(2) ** (t0p_fxp[i].re.m - t0p_fxp[i].re.p)
+             - t0p_mp[i].real) ** 2
+            + (mpmath.mpf(t0p_fxp[i].im.x) * mpmath.mpf(2) ** (t0p_fxp[i].im.m - t0p_fxp[i].im.p)
+               - t0p_mp[i].imag) ** 2
+        ))
+        errors.setdefault(level, {"fp": [], "fxp": []})
+        errors[level]["fp"].append(e_fp)
+        errors[level]["fxp"].append(e_fxp)
+
+    # Left recursion on t0'.
+    t0p_split_fp = _split_float(t0p_fp)
+    t0p_split_fxp = [_renormalize_poly(p_, m_sign) for p_ in split_complex_fxp(t0p_fxp)]
+    t0p_split_mp = list(_mp_split_fft(t0p_mp))
+
+    z_fp_left, z_fxp_left, z_mp_left = _walker(
+        t0p_split_fp, t0p_split_fxp, t0p_split_mp,
+        tree_fp_0, tree_fxp_0, tree_mp_0,
+        sigmin_fp, rng_fp, rng_fxp, rng_mp,
+        errors, level + 1, m_sign,
+    )
+
+    z0_fp = _merge_float(z_fp_left)
+    z0_fxp = _renormalize_poly(merge_fft_fxp(z_fxp_left), m_sign)
+    z0_mp = _mp_merge_fft(*z_mp_left)
+
+    return [z0_fp, z1_fp], [z0_fxp, z1_fxp], [z0_mp, z1_mp]
+
+
+# --------------------------------------------------------------------- #
+# Driver
+# --------------------------------------------------------------------- #
+
+
+def run_trial(sk, G_mp, tree_fp, tree_fxp_by_p, tree_mp, m_sign, seed_int,
+              p_target):
+    # Deterministic message/salt.
+    r = random.Random(seed_int)
+    msg = r.randbytes(32)
+    salt = r.randbytes(40)
+    c = sk.hash_to_point(msg, salt)
+
+    t_fp, t_mp, t_fxps = build_t_at_all_precisions(sk, c, [p_target], m_sign)
+    t_fxp = t_fxps[p_target]
+    tree_fxp = tree_fxp_by_p[p_target]
+
+    seed = seed_int.to_bytes(48, "big")
+    rng_fp = ChaCha20(seed)
+    rng_fxp = ChaCha20(seed)
+    rng_mp = ChaCha20(seed)
+    sigmin_fp = sk.sigmin
+
+    errors = {}
+    _walker(t_fp, t_fxp, t_mp,
+            tree_fp, tree_fxp, tree_mp,
+            sigmin_fp, rng_fp, rng_fxp, rng_mp,
+            errors, level=0, m_sign=m_sign)
+    return errors
+
+
+def _log2_neg(x):
+    return -math.log2(x) if x > 0 else float("inf")
+
+
+def _stats(vals):
+    """Return (mean, max) of a non-empty list of non-negative floats."""
+    return sum(vals) / len(vals), max(vals)
+
+
+def main():
+    n = 512
+    n_trials = 1000
+    # Standard target: ‖t̂‖_∞ ≤ n·γ_FG ≈ 2^20.93 worst-case, so m_sign = 21
+    # (see fxp/sign_tweak.py:_reconstruct_s_fxp). With the
+    # tweak this would be 18.
+    m_sign = 21
+    random.seed(2026)
+    print(f"Generating Falcon-{n} keypair (full NTRUGen filter)...")
+    sk = _filtered_sk(n)
+
+    print("Computing exact Gram + mpmath FFT...")
+    G_mp = _gram_int_then_mp_fft(sk)
+
+    print("Building trees at each precision...")
+    tree_fp = build_fp_tree(sk)
+    tree_mp = build_mp_tree(G_mp, sk, FALCON_Q)
+    sigma_mp = mpmath.mpf(sk.sigma)
+    mp_normalize_tree(tree_mp, sigma_mp)
+
+    tree_fxp_by_p = {}
+    for p in [63, 127]:
+        tree_fxp_by_p[p] = build_fxp_tree_at_p_selfconsistent(sk, p=p, m_sign=m_sign)
+
+    print(f"Running {n_trials} trials per precision (per-coefficient errors)...")
+    merged_by_p = {}
+    for p in [63, 127]:
+        merged = {}
+        t0 = time.time()
+        for t in range(n_trials):
+            errs = run_trial(sk, G_mp, tree_fp, tree_fxp_by_p, tree_mp,
+                             m_sign, seed_int=100 + t, p_target=p)
+            for lvl, d in errs.items():
+                merged.setdefault(lvl, {"fp": [], "fxp": []})
+                merged[lvl]["fp"].extend(d["fp"])
+                merged[lvl]["fxp"].extend(d["fxp"])
+            if (t + 1) % 100 == 0:
+                dt = time.time() - t0
+                rate = (t + 1) / dt
+                eta = (n_trials - t - 1) / rate
+                print(f"  p={p}: {t+1}/{n_trials}  ({dt:.0f}s elapsed, "
+                      f"~{eta:.0f}s remaining at {rate:.1f} trials/s)")
+        merged_by_p[p] = merged
+        # Sanity: per-level sample count should equal n_trials × n_per_level
+        # (where n_per_level summed over all 2^k recursive calls is always
+        # the root n). For Falcon-512: 1000 × 512 = 512000 per (level, fmt).
+        any_lvl = next(iter(merged))
+        print(f"  p={p} done ({len(merged[any_lvl]['fp'])} samples per level)")
+
+    print()
+    print("Per-level stats: mean and max of |t_0' − t_0'_mpmath| (∞-norm-equivalent),")
+    print(f"aggregated over {n_trials} trials × all coefficients at that level.")
+    print()
+    fmt_hdr = (f"{'level':>5} | "
+               f"{'FP mean':>10} {'FP max':>10} | "
+               f"{'F63 mean':>10} {'F63 max':>10} | "
+               f"{'F127 mean':>10} {'F127 max':>10}")
+    print(fmt_hdr)
+    print("-" * len(fmt_hdr))
+    max_level = max(merged_by_p[63].keys())
+    for lvl in range(max_level + 1):
+        if lvl not in merged_by_p[63]:
+            continue
+        fp_mean,  fp_max  = _stats(merged_by_p[63][lvl]["fp"])
+        e63_mean, e63_max = _stats(merged_by_p[63][lvl]["fxp"])
+        e127_mean, e127_max = _stats(merged_by_p[127][lvl]["fxp"])
+        print(f"{lvl:>5} | "
+              f"2^-{_log2_neg(fp_mean):>5.2f}   2^-{_log2_neg(fp_max):>5.2f}  | "
+              f"2^-{_log2_neg(e63_mean):>5.2f}   2^-{_log2_neg(e63_max):>5.2f}  | "
+              f"2^-{_log2_neg(e127_mean):>5.2f}   2^-{_log2_neg(e127_max):>5.2f}")
+
+    # CSV.
+    levels = sorted(merged_by_p[63].keys())
+    rows = []
+    for l in levels:
+        fp_mean,   fp_max   = _stats(merged_by_p[63][l]["fp"])
+        e63_mean,  e63_max  = _stats(merged_by_p[63][l]["fxp"])
+        e127_mean, e127_max = _stats(merged_by_p[127][l]["fxp"])
+        rows.append([l,
+                     f"{fp_mean:.6e}",   f"{fp_max:.6e}",
+                     f"{e63_mean:.6e}",  f"{e63_max:.6e}",
+                     f"{e127_mean:.6e}", f"{e127_max:.6e}"])
+    write_csv(HERE / "tables" / f"ffsampling_precision_selfconsistent_n{n}.csv",
+              headers=["level",
+                       "fp_mean", "fp_max",
+                       "fxp63_mean", "fxp63_max",
+                       "fxp127_mean", "fxp127_max"],
+              rows=rows)
+
+    # Plot: max as solid (worst case observed); mean as dashed (typical).
+    fp_mean_l   = [_stats(merged_by_p[63][l]["fp"])[0]   for l in levels]
+    fp_max_l    = [_stats(merged_by_p[63][l]["fp"])[1]   for l in levels]
+    e63_mean_l  = [_stats(merged_by_p[63][l]["fxp"])[0]  for l in levels]
+    e63_max_l   = [_stats(merged_by_p[63][l]["fxp"])[1]  for l in levels]
+    e127_mean_l = [_stats(merged_by_p[127][l]["fxp"])[0] for l in levels]
+    e127_max_l  = [_stats(merged_by_p[127][l]["fxp"])[1] for l in levels]
+
+    fig, ax = plt.subplots(figsize=(10.5, 6.0))
+    # Max (solid, marker)
+    ax.plot(levels, fp_max_l,   "o-",  color="C0", linewidth=2,
+            label="float64 — max")
+    ax.plot(levels, e63_max_l,  "s-",  color="C1", linewidth=2,
+            label="FxP-63   — max")
+    ax.plot(levels, e127_max_l, "^-",  color="C2", linewidth=2,
+            label="FxP-127  — max")
+    # Mean (dashed, lighter)
+    ax.plot(levels, fp_mean_l,   "o--", color="C0", linewidth=1.3, alpha=0.7,
+            label="float64 — mean")
+    ax.plot(levels, e63_mean_l,  "s--", color="C1", linewidth=1.3, alpha=0.7,
+            label="FxP-63   — mean")
+    ax.plot(levels, e127_mean_l, "^--", color="C2", linewidth=1.3, alpha=0.7,
+            label="FxP-127  — mean")
+
+    # ULP reference floors at (m_sign, p): LSB = 2^(m_sign - p).
+    # FxP-63 at m_sign=21 ⇒ 2^-42; FxP-127 at m_sign=21 ⇒ 2^-106.
+    fxp63_ulp = 2 ** (m_sign - 63)
+    fxp127_ulp = 2 ** (m_sign - 127)
+    ax.axhline(fxp63_ulp,  color="C1", linestyle=":", linewidth=0.9, alpha=0.6)
+    ax.axhline(fxp127_ulp, color="C2", linestyle=":", linewidth=0.9, alpha=0.6)
+
+    ax.set_yscale("log", base=2)
+    import matplotlib.ticker as mticker
+    ax.yaxis.set_major_locator(mticker.LogLocator(base=2, numticks=20))
+    ax.yaxis.set_major_formatter(mticker.LogFormatterMathtext(base=2))
+    ax.set_xlabel("ffsampling level  (0 = root)")
+    ax.set_ylabel(r"$|t_0'(i) - t_0'_{\mathrm{mpmath}}(i)|$  (per coefficient)")
+    ax.set_title(
+        f"ffsampling precision (Falcon-{n}, **standard** target "
+        f"$t = (-c \\cdot F/q,\\, c \\cdot f/q)$, $m_{{sign}}={m_sign}$, "
+        f"{n_trials} trials/precision)\n"
+        f"solid = max over (coef × trial)   |   dashed = mean over (coef × trial)"
+    )
+    ax.grid(True, which="both", alpha=0.3)
+    ax.legend(loc="lower left", fontsize=9, ncol=2)
+    fig.tight_layout()
+    save_fig(fig, f"ffsampling_precision_selfconsistent_n{n}", HERE)
+
+
+if __name__ == "__main__":
+    main()

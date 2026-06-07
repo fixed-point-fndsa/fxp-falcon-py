@@ -1,0 +1,38 @@
+% Generic log-log template (precision/error vs dimension).
+% Copy this file, rename it, and edit:
+%   - the CSV path (../../tables/<NAME>.csv)
+%   - the column names (x= / y=)
+%   - axis labels and legend entries
+%   - reference scaling lines (the dashed ones at the end)
+
+\begin{tikzpicture}
+\begin{loglogaxis}[
+    width=0.85\linewidth, height=0.55\linewidth,
+    xlabel={\textsf{X-axis label}},
+    ylabel={\textsf{Y-axis label}},
+    grid=both,
+    grid style={line width=.1pt, draw=gray!30},
+    major grid style={line width=.2pt, draw=gray!50},
+    legend cell align={left},
+    legend pos=south east,
+    log basis x=2,
+    log basis y=2,
+]
+
+\addplot+[mark=*, mark size=2.2, very thick] table
+    [x=n, y=COL1, col sep=comma]
+    {../../tables/CSV_NAME.csv};
+\addlegendentry{Series 1}
+
+\addplot+[mark=square*, mark size=2.0, very thick] table
+    [x=n, y=COL2, col sep=comma]
+    {../../tables/CSV_NAME.csv};
+\addlegendentry{Series 2}
+
+% Optional reference scaling line (dashed, computed analytically).
+% \addplot[domain=8:1024, samples=50, dashed, gray, line width=0.8pt]
+%     {sqrt(x) * 2^(-53)};
+% \addlegendentry{$\sim \sqrt{n}\, 2^{-53}$}
+
+\end{loglogaxis}
+\end{tikzpicture}

@@ -1,0 +1,21 @@
+[project]
+name = "falcon-fxp"
+version = "0.1.0"
+description = "Fixed-point Python prototype for the Falcon signature scheme"
+requires-python = ">=3.10"
+dependencies = [
+    "beartype>=0.18",     # runtime type checks at fxp call boundaries
+    "pycryptodome>=3.20", # SHAKE256 (falcon hash-to-point), isPrime
+    "pytest>=7.0",        # tests/test_fxtypes.py unit tests
+]
+
+[project.optional-dependencies]
+# Precision benchmarks under experiments/ (mpmath-256 reference + figures).
+experiments = [
+    "mpmath>=1.3",
+    "matplotlib>=3.7",
+]
+
+[tool.uv]
+# Flat-module repo (sys.path-based imports), not an installable package.
+package = false

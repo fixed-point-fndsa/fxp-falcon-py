@@ -1,0 +1,36 @@
+% Coefficient-wise complex division precision.
+% Source: experiments/bench_div_precision.py → tables/div_precision.csv
+
+\begin{tikzpicture}
+\begin{loglogaxis}[
+    width=0.85\linewidth, height=0.55\linewidth,
+    xlabel={polynomial dimension $n$},
+    ylabel={$\max_i\, |(f/g)_i^{\mathrm{got}} - (f/g)_i^{\mathrm{ref}}|$},
+    grid=both,
+    grid style={line width=.1pt, draw=gray!30},
+    major grid style={line width=.2pt, draw=gray!50},
+    legend cell align={left},
+    legend pos=south east,
+    log basis x=2,
+    xtick={8,16,32,64,128,256,512,1024},
+    xticklabels={8,16,32,64,128,256,512,1024},
+    log basis y=2,
+]
+
+\addplot+[mark=*, mark size=2.2, very thick] table
+    [x=n, y=fp, col sep=comma]
+    {../../tables/div_precision.csv};
+\addlegendentry{float64 (\(p=53\))}
+
+\addplot+[mark=square*, mark size=2.0, very thick] table
+    [x=n, y=fxp63, col sep=comma]
+    {../../tables/div_precision.csv};
+\addlegendentry{FxP \(p=63\)}
+
+\addplot+[mark=triangle*, mark size=2.5, very thick] table
+    [x=n, y=fxp127, col sep=comma]
+    {../../tables/div_precision.csv};
+\addlegendentry{FxP \(p=127\)}
+
+\end{loglogaxis}
+\end{tikzpicture}

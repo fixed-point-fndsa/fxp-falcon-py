@@ -1,0 +1,50 @@
+% FFT precision: float64 vs FxP-63 vs FxP-127.
+% Source: experiments/bench_fft_precision.py → tables/fft_precision.csv
+% Reference lines show the asymptotic √n / 2^p scaling of FFT round-off.
+
+\begin{tikzpicture}
+\begin{loglogaxis}[
+    width=0.85\linewidth, height=0.55\linewidth,
+    xlabel={FFT dimension $n$},
+    ylabel={$\max_i\, |\mathrm{FFT}(f)_i - \mathrm{ref}_i|$},
+    grid=both,
+    grid style={line width=.1pt, draw=gray!30},
+    major grid style={line width=.2pt, draw=gray!50},
+    legend cell align={left},
+    legend pos=south east,
+    log basis x=2,
+    xtick={8,16,32,64,128,256,512,1024},
+    xticklabels={8,16,32,64,128,256,512,1024},
+    log basis y=2,
+]
+
+\addplot+[mark=*, mark size=2.2, very thick] table
+    [x=n, y=fp, col sep=comma]
+    {../../tables/fft_precision.csv};
+\addlegendentry{float64 (\(p=53\))}
+
+\addplot+[mark=square*, mark size=2.0, very thick] table
+    [x=n, y=fxp63, col sep=comma]
+    {../../tables/fft_precision.csv};
+\addlegendentry{FxP \(p=63\)}
+
+\addplot+[mark=triangle*, mark size=2.5, very thick] table
+    [x=n, y=fxp127, col sep=comma]
+    {../../tables/fft_precision.csv};
+\addlegendentry{FxP \(p=127\)}
+
+% Reference scaling lines: error \sim sqrt(n) * 2^{-p}.
+\addplot[domain=8:1024, samples=50, dashed, gray, line width=0.8pt]
+    {sqrt(x) * 2^(-53)};
+\addlegendentry{$\sim \sqrt{n}\, 2^{-53}$}
+
+\addplot[domain=8:1024, samples=50, dashed, orange, line width=0.8pt]
+    {sqrt(x) * 2^(-63)};
+\addlegendentry{$\sim \sqrt{n}\, 2^{-63}$}
+
+\addplot[domain=8:1024, samples=50, dashed, green!60!black, line width=0.8pt]
+    {sqrt(x) * 2^(-127)};
+\addlegendentry{$\sim \sqrt{n}\, 2^{-127}$}
+
+\end{loglogaxis}
+\end{tikzpicture}
