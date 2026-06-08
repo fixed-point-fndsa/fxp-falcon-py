@@ -16,8 +16,12 @@ The precision is p = 63 throughout the production signing path.
 
 # Root Gram, per-entry. G_00 = |fft(g)|²+|fft(f)|² < 2·γ_fg² = 130050 < 2^17.
 M_G00 = 17
-# G_10 (off-diagonal) ≤ 2·γ_fg·γ_FG ≈ 2^20.77 < 2^21 (empirically m=20 holds).
-# The RootGram has no g11 field (D_11 recovered via q²/D_00, never stored).
+# G_10 (off-diagonal). G_01 = conj(F̂·f̂* + Ĝ·ĝ*) — the Check-4 numerator (see
+# norm_fft_k) — so |G_01| = |L_10|·G_00 ≤ |F̂||f̂| + |Ĝ||ĝ| ≤ 2·γ_fg·γ_FG ≈
+# 2^20.77 < 2^21. This is essentially tight: over 200 keys max|G_01| = 2^20.23,
+# which already needs m=21 (m=20 would overflow). γ_root·G_00 (2^21.6) and
+# γ_hybrid·16q (2^22.2) are looser; γ_GPV is an average (not an ∞-norm) bound,
+# so it cannot tighten this. The RootGram has no g11 field (D_11 = q²/D_00).
 M_G01 = 21
 
 # L_10 at the ffLDL root: ‖L_10_root‖_∞ ≤ γ_root = 24 < 2^5 by construction
@@ -25,9 +29,17 @@ M_G01 = 21
 M_L10_ROOT = 5
 # L_10 at non-root levels: |·| ≤ 1 (Lemma 9 + α_k interpolation), m=0 is tight.
 M_L10_INNER = 0
-# Leaf diagonal D_ii: the γ_hybrid filter gives |D_ii| ∈ [q/α_h², α_h²·q]
-# ⊂ [2^13, 2^14.5] (Lemma 9), plus drift bits. (Use 19 without the filter.)
+# Gram diagonal D_ii during the ffLDL recursion: the γ_hybrid filter gives
+# |D_ii| ∈ [q/α_h², α_h²·q] ⊂ [2^13, 2^14.5] (Lemma 9), plus drift bits.
+# (Use 19 without the filter.) M_D is shared across all levels; it must hold the
+# loosest (intermediate) diagonals, where 16q = 2^17.58 forces 18.
 M_D = 18
+# FINAL ffLDL leaves specifically (the per-coefficient GS norms fed to rsqrt) are
+# tighter: D_ii ≤ 1.17²·q = 16822 < 2^15 by the stock NTRUGen gs_norm filter
+# (also asserted in nr_fxp.rsqrt). Retagging leaves to M_D_LEAF before rsqrt
+# recovers ~3 bits in the rsqrt intermediates (m_xy = M_D_LEAF − 12 = 3) and
+# hence in σ_i. NB m=14 would overflow: 1.17²·q = 2^14.04 > 2^14.
+M_D_LEAF = 15
 # Leaf 1/σ_i after normalization (= √D_ii/σ): |1/σ_i| < 1 = 2^0 (σ_i > 1
 # under the stock NTRUGen `gs_norm ≤ 1.17²·q` bound). samplerz multiplies by
 # this instead of dividing by σ_i.

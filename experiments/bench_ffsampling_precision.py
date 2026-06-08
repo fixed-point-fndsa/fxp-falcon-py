@@ -2,10 +2,13 @@
 Precision benchmark for ffsampling — self-consistent per format.
 
 For each of {FP float64, FxP-63, FxP-127}, we do:
-  - Build the Gram in its native precision (exact integer Gram for fxp;
-    float for FP; mpmath-256 for the ground truth).
-  - Build the ffLDL tree at that precision.
-  - Run ffsampling at that precision.
+  - Build the Gram in its native precision: for fxp, the DEPLOYED path
+    (fxp FFT of B0 → `_gram_fft_fxp`, retag-before-mul); float for FP;
+    mpmath-256 for the ground truth. Likewise the target t uses the deployed
+    `_build_t_standard_fxp` arithmetic (γ-retag before the products).
+  - Build the ffLDL tree at that precision (`keygen_fxp`).
+  - Run ffsampling at that precision and grade the reduced target t_0' per
+    recursion level vs the mpmath ground truth.
 
 Ground truth is a full mpmath-256 pipeline (Gram, ffLDL, ffsampling).
 
@@ -45,12 +48,23 @@ from rng import ChaCha20  # noqa: E402
 from common import q as FALCON_Q  # noqa: E402
 from samplerz import samplerz as samplerz_ref  # noqa: E402
 
-from fxtypes import FxR, FxC, RootGram  # noqa: E402
+from fxtypes import FxR, FxC  # noqa: E402
 from fft_fxp import (  # noqa: E402
     add_fft_fxp, sub_fft_fxp, mul_fft_fxp, split_complex_fxp, merge_fft_fxp,
-    fft_fxp, adj_fft_fxp, retag_poly_fxc,
+    fft_fxp, retag_poly_fxc,
 )
 from ffldl_fxp import keygen_fxp  # noqa: E402
+from sign_tweak import _gram_fft_fxp  # noqa: E402  (deployed Gram, retag-before-mul)
+from m_budgets import M_B_FG, M_B_FG_UP  # noqa: E402
+# p-precise generated constants (NOT from_float — a float64 1/q or 1/σ caps the
+# target / σ_i at ~2^-53 regardless of p, which would hide fxp-127's headroom).
+from fxp_constants_p63 import (  # noqa: E402
+    INV_Q_FXC as _INVQ_63, INV_SIGMA_FXR_BY_N as _INVSIG_63, SIGMIN_FXR_BY_N as _SIGMIN_63)
+from fxp_constants_p127 import (  # noqa: E402
+    INV_Q_FXC as _INVQ_127, INV_SIGMA_FXR_BY_N as _INVSIG_127, SIGMIN_FXR_BY_N as _SIGMIN_127)
+_INVQ = {63: _INVQ_63, 127: _INVQ_127}
+_INVSIG = {63: _INVSIG_63, 127: _INVSIG_127}
+_SIGMIN = {63: _SIGMIN_63, 127: _SIGMIN_127}
 from ntrugen_filters import (  # noqa: E402
     GAMMA_FG_512, GAMMA_HYBRID, GAMMA_ROOT,
     norm_fft_fg, alpha_hybrid_squared, norm_fft_k,
@@ -139,15 +153,14 @@ def build_fxp_tree_at_p_selfconsistent(sk, p, m_sign):
     # fft_fxp per block.
     B_fft = [[fft_fxp(B_fxr[i][j]) for j in range(2)] for i in range(2)]
 
-    # RootGram (g00, g10): G[i][j] = sum_k B[i][k]·adj(B[j][k]). The diagonal
-    # G_00 is Hermitian-real (PolyR); G_11 recovered by the root LDL via q²/D_00.
-    def _block(i, j):
-        return add_fft_fxp(mul_fft_fxp(B_fft[i][0], adj_fft_fxp(B_fft[j][0])),
-                           mul_fft_fxp(B_fft[i][1], adj_fft_fxp(B_fft[j][1])))
-    G_fxp = RootGram(g00=[z.re for z in _block(0, 0)], g10=_block(1, 0))
+    # Production Gram: `_gram_fft_fxp` retags the B0 rows to their tight γ
+    # bounds (M_B_FG / M_B_FG_UP) BEFORE the products, so this matches the
+    # DEPLOYED keygen exactly rather than a stale inline replica. B_fft is the
+    # [[fft(g), fft(−f)], [fft(G), fft(−F)]] structure it expects.
+    G_fxp = _gram_fft_fxp(B_fft)
 
-    inv_sigma_fxr = FxR.from_float(1.0 / sk.sigma, m=-7, p=p)   # 1/σ (INV_SIGMA)
-    sigmin_fxr = FxR.from_float(sk.sigmin, m=1, p=p)            # σ_min (for ccs_i)
+    inv_sigma_fxr = _INVSIG[p][sk.n]   # 1/σ (INV_SIGMA), m=-7, p-precise (not float64)
+    sigmin_fxr = _SIGMIN[p][sk.n]      # σ_min, m=1, p-precise
     # Budgets fixed inside keygen_fxp (M_L10_ROOT=5, M_L10_INNER=0, M_D=18);
     # valid because `sk` passes the full NTRUGen filter (see _filtered_sk).
     return keygen_fxp(
@@ -237,16 +250,20 @@ def build_t_at_all_precisions(sk, c, p_fxp_list, m_sign):
     # |f_i|, |F_i| ≤ γ_FG = 3500 < 2^11.78 < 2^13. Conservative m=13 keeps
     # one bit of headroom for the FxR invariant.
     M_B0_COEF = 13
-    from fxtypes import FxC, retag_value_fxc  # local: bench-only dep
+    from fxtypes import retag_value_fxc  # local: bench-only dep
     t_fxps = {}
     for p in p_fxp_list:
         c_fxc = fft_fxp([FxR.from_int(int(ci), m=M_POINT_COEF, p=p) for ci in c])
-        F_fxc = fft_fxp([FxR.from_int(int(F_i), m=M_B0_COEF, p=p) for F_i in sk.F])
-        f_fxc = fft_fxp([FxR.from_int(int(f_i), m=M_B0_COEF, p=p) for f_i in sk.f])
-        inv_q = FxC(re=FxR.from_float(1.0 / q, m=-13, p=p),
-                    im=FxR(x=0, m=-13, p=p))
-        # c·F at m = M_POINT_COEF + M_B0_COEF + 2·(log2(n)−1); ·inv_q + retag
-        # brings down to m_sign. Same pattern for c·f.
+        # Retag fft(F), fft(f) to their tight γ bounds BEFORE the products —
+        # matches the deployed `_build_t_standard_fxp` (M_B_FG_UP=γ_FG for F,
+        # M_B_FG=γ_fg for f). Multiplying at the loose post-FFT m would discard
+        # ~6 bits (see target_construction._build_t_standard_fxp).
+        F_fxc = retag_poly_fxc(
+            fft_fxp([FxR.from_int(int(F_i), m=M_B0_COEF, p=p) for F_i in sk.F]), M_B_FG_UP)
+        f_fxc = retag_poly_fxc(
+            fft_fxp([FxR.from_int(int(f_i), m=M_B0_COEF, p=p) for f_i in sk.f]), M_B_FG)
+        inv_q = _INVQ[p]   # p-precise generated 1/q (m=-13), as in production
+                           # target_construction._div_by_q_fxc (NOT a float64 1/q).
         t0 = [retag_value_fxc(-(ci * Fi) * inv_q, m_sign)
               for ci, Fi in zip(c_fxc, F_fxc)]
         t1 = [retag_value_fxc((ci * fi) * inv_q, m_sign)
@@ -431,13 +448,15 @@ def _log2_neg(x):
 
 
 def _stats(vals):
-    """Return (mean, max) of a non-empty list of non-negative floats."""
-    return sum(vals) / len(vals), max(vals)
+    """Return (MSE, RMSE) of a non-empty list of absolute errors. The MSE
+    (mean of squares) is the Rényi-relevant aggregate (Prest'17); RMSE = √MSE
+    is in error units, for plotting/reading."""
+    mse = sum(v * v for v in vals) / len(vals)
+    return mse, math.sqrt(mse)
 
 
-def main():
+def main(n_trials=1000):
     n = 512
-    n_trials = 1000
     # Standard target: ‖t̂‖_∞ ≤ n·γ_FG ≈ 2^20.93 worst-case, so m_sign = 21
     # (see fxp/sign_tweak.py:_reconstruct_s_fxp). With the
     # tweak this would be 18.
@@ -485,68 +504,56 @@ def main():
         print(f"  p={p} done ({len(merged[any_lvl]['fp'])} samples per level)")
 
     print()
-    print("Per-level stats: mean and max of |t_0' − t_0'_mpmath| (∞-norm-equivalent),")
-    print(f"aggregated over {n_trials} trials × all coefficients at that level.")
+    print("Per-level error of |t_0' − t_0'_mpmath| (absolute, ∞-norm-equivalent),")
+    print(f"aggregated as MEAN SQUARED ERROR over {n_trials} trials × all "
+          f"coefficients at that level (RMSE = √MSE; reported as 2^-bits).")
     print()
     fmt_hdr = (f"{'level':>5} | "
-               f"{'FP mean':>10} {'FP max':>10} | "
-               f"{'F63 mean':>10} {'F63 max':>10} | "
-               f"{'F127 mean':>10} {'F127 max':>10}")
+               f"{'FP MSE':>10} {'FP RMSE':>10} | "
+               f"{'F63 MSE':>10} {'F63 RMSE':>10} | "
+               f"{'F127 MSE':>10} {'F127 RMSE':>10}")
     print(fmt_hdr)
     print("-" * len(fmt_hdr))
     max_level = max(merged_by_p[63].keys())
     for lvl in range(max_level + 1):
         if lvl not in merged_by_p[63]:
             continue
-        fp_mean,  fp_max  = _stats(merged_by_p[63][lvl]["fp"])
-        e63_mean, e63_max = _stats(merged_by_p[63][lvl]["fxp"])
-        e127_mean, e127_max = _stats(merged_by_p[127][lvl]["fxp"])
+        fp_mse,  fp_rmse  = _stats(merged_by_p[63][lvl]["fp"])
+        e63_mse, e63_rmse = _stats(merged_by_p[63][lvl]["fxp"])
+        e127_mse, e127_rmse = _stats(merged_by_p[127][lvl]["fxp"])
         print(f"{lvl:>5} | "
-              f"2^-{_log2_neg(fp_mean):>5.2f}   2^-{_log2_neg(fp_max):>5.2f}  | "
-              f"2^-{_log2_neg(e63_mean):>5.2f}   2^-{_log2_neg(e63_max):>5.2f}  | "
-              f"2^-{_log2_neg(e127_mean):>5.2f}   2^-{_log2_neg(e127_max):>5.2f}")
+              f"2^-{_log2_neg(fp_mse):>5.2f}   2^-{_log2_neg(fp_rmse):>5.2f}  | "
+              f"2^-{_log2_neg(e63_mse):>5.2f}   2^-{_log2_neg(e63_rmse):>5.2f}  | "
+              f"2^-{_log2_neg(e127_mse):>5.2f}   2^-{_log2_neg(e127_rmse):>5.2f}")
 
     # CSV.
     levels = sorted(merged_by_p[63].keys())
     rows = []
-    for l in levels:
-        fp_mean,   fp_max   = _stats(merged_by_p[63][l]["fp"])
-        e63_mean,  e63_max  = _stats(merged_by_p[63][l]["fxp"])
-        e127_mean, e127_max = _stats(merged_by_p[127][l]["fxp"])
-        rows.append([l,
-                     f"{fp_mean:.6e}",   f"{fp_max:.6e}",
-                     f"{e63_mean:.6e}",  f"{e63_max:.6e}",
-                     f"{e127_mean:.6e}", f"{e127_max:.6e}"])
+    for lvl in levels:
+        fp_mse,   fp_rmse   = _stats(merged_by_p[63][lvl]["fp"])
+        e63_mse,  e63_rmse  = _stats(merged_by_p[63][lvl]["fxp"])
+        e127_mse, e127_rmse = _stats(merged_by_p[127][lvl]["fxp"])
+        rows.append([lvl,
+                     f"{fp_mse:.6e}",   f"{fp_rmse:.6e}",
+                     f"{e63_mse:.6e}",  f"{e63_rmse:.6e}",
+                     f"{e127_mse:.6e}", f"{e127_rmse:.6e}"])
     write_csv(HERE / "tables" / f"ffsampling_precision_selfconsistent_n{n}.csv",
               headers=["level",
-                       "fp_mean", "fp_max",
-                       "fxp63_mean", "fxp63_max",
-                       "fxp127_mean", "fxp127_max"],
+                       "fp_mse", "fp_rmse",
+                       "fxp63_mse", "fxp63_rmse",
+                       "fxp127_mse", "fxp127_rmse"],
               rows=rows)
 
-    # Plot: max as solid (worst case observed); mean as dashed (typical).
-    fp_mean_l   = [_stats(merged_by_p[63][l]["fp"])[0]   for l in levels]
-    fp_max_l    = [_stats(merged_by_p[63][l]["fp"])[1]   for l in levels]
-    e63_mean_l  = [_stats(merged_by_p[63][l]["fxp"])[0]  for l in levels]
-    e63_max_l   = [_stats(merged_by_p[63][l]["fxp"])[1]  for l in levels]
-    e127_mean_l = [_stats(merged_by_p[127][l]["fxp"])[0] for l in levels]
-    e127_max_l  = [_stats(merged_by_p[127][l]["fxp"])[1] for l in levels]
+    # Plot RMSE = √MSE per format (one solid curve each). MSE is the Rényi
+    # aggregate; RMSE is plotted because it is in error units.
+    fp_rmse_l   = [_stats(merged_by_p[63][lvl]["fp"])[1]   for lvl in levels]
+    e63_rmse_l  = [_stats(merged_by_p[63][lvl]["fxp"])[1]  for lvl in levels]
+    e127_rmse_l = [_stats(merged_by_p[127][lvl]["fxp"])[1] for lvl in levels]
 
     fig, ax = plt.subplots(figsize=(10.5, 6.0))
-    # Max (solid, marker)
-    ax.plot(levels, fp_max_l,   "o-",  color="C0", linewidth=2,
-            label="float64 — max")
-    ax.plot(levels, e63_max_l,  "s-",  color="C1", linewidth=2,
-            label="FxP-63   — max")
-    ax.plot(levels, e127_max_l, "^-",  color="C2", linewidth=2,
-            label="FxP-127  — max")
-    # Mean (dashed, lighter)
-    ax.plot(levels, fp_mean_l,   "o--", color="C0", linewidth=1.3, alpha=0.7,
-            label="float64 — mean")
-    ax.plot(levels, e63_mean_l,  "s--", color="C1", linewidth=1.3, alpha=0.7,
-            label="FxP-63   — mean")
-    ax.plot(levels, e127_mean_l, "^--", color="C2", linewidth=1.3, alpha=0.7,
-            label="FxP-127  — mean")
+    ax.plot(levels, fp_rmse_l,   "o-", color="C0", linewidth=2, label="float64")
+    ax.plot(levels, e63_rmse_l,  "s-", color="C1", linewidth=2, label="FxP-63 (deployed)")
+    ax.plot(levels, e127_rmse_l, "^-", color="C2", linewidth=2, label="FxP-127")
 
     # ULP reference floors at (m_sign, p): LSB = 2^(m_sign - p).
     # FxP-63 at m_sign=21 ⇒ 2^-42; FxP-127 at m_sign=21 ⇒ 2^-106.
@@ -560,18 +567,19 @@ def main():
     ax.yaxis.set_major_locator(mticker.LogLocator(base=2, numticks=20))
     ax.yaxis.set_major_formatter(mticker.LogFormatterMathtext(base=2))
     ax.set_xlabel("ffsampling level  (0 = root)")
-    ax.set_ylabel(r"$|t_0'(i) - t_0'_{\mathrm{mpmath}}(i)|$  (per coefficient)")
+    ax.set_ylabel(r"RMSE of $|t_0'(i) - t_0'_{\mathrm{mpmath}}(i)|$  ($=\sqrt{\mathrm{MSE}}$)")
     ax.set_title(
-        f"ffsampling precision (Falcon-{n}, **standard** target "
-        f"$t = (-c \\cdot F/q,\\, c \\cdot f/q)$, $m_{{sign}}={m_sign}$, "
-        f"{n_trials} trials/precision)\n"
-        f"solid = max over (coef × trial)   |   dashed = mean over (coef × trial)"
+        f"ffsampling absolute precision (Falcon-{n}, standard target "
+        f"$t=(-c{{\\cdot}}F/q,\\,c{{\\cdot}}f/q)$, $m_{{sign}}={m_sign}$, "
+        f"{n_trials} trials)\n"
+        f"deployed fxp path; RMSE per recursion level (MSE is the Rényi aggregate)"
     )
     ax.grid(True, which="both", alpha=0.3)
-    ax.legend(loc="lower left", fontsize=9, ncol=2)
+    ax.legend(loc="lower left", fontsize=9)
     fig.tight_layout()
     save_fig(fig, f"ffsampling_precision_selfconsistent_n{n}", HERE)
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    main(int(sys.argv[1]) if len(sys.argv) > 1 else 1000)

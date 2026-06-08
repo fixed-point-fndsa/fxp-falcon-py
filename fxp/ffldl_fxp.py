@@ -32,7 +32,7 @@ from fft_fxp import (
     retag_poly_fxr,
 )
 from nr_fxp import rsqrt, nr_reciprocal
-from m_budgets import M_NORM_OUT, M_L10_ROOT, M_L10_INNER, M_D
+from m_budgets import M_NORM_OUT, M_L10_ROOT, M_L10_INNER, M_D, M_D_LEAF
 
 
 @beartype
@@ -87,7 +87,10 @@ def _normalize_leaf_poly(poly, inv_sigma: FxR, sigmin: FxR, iters: int):
 
     D_ii is Hermitian-positive, so D_ii(ζ_0) is real — `poly[0]` is the FxR."""
     assert len(poly) == 2
-    a_re = poly[0]
+    # Tighten the leaf D_ii from the shared M_D=18 to M_D_LEAF=15 (value-
+    # preserving): a final leaf satisfies D_ii ≤ 1.17²q < 2^15 (gs_norm), so this
+    # sharpens rsqrt's intermediates (m_xy = 15−12 = 3) and σ_i by ~3 bits.
+    a_re = retag_value_fxr(poly[0], M_D_LEAF)
     y = rsqrt(a_re, iters=iters)
     sqrt_D = a_re * y                                              # √D_ii
     inv_sigma_i = retag_value_fxr(sqrt_D * inv_sigma, M_NORM_OUT)  # 1/σ_i (m=0)
@@ -136,20 +139,6 @@ def keygen_fxp(
     return normalize_tree_fxp(tree, inv_sigma=inv_sigma, sigmin=sigmin, iters=iters)
 
 
-def _child_grams(D00, D11) -> tuple[Gram, Gram]:
-    """Return the two 2x2 child Grams fed to the next ffLDL level.
-
-    D00/D11 are real (PolyR); `split_real_fxp` yields a real diagonal `d`
-    (f0) and a complex off-diagonal `d'` (f1), so each child is the Hermitian
-    Gram [[d, d'], [adj(d'), d]] — stored as (g00=d, g10=adj(d')), with the
-    second diagonal g11 == g00 implied (see `Gram`).
-    """
-    d00, d01 = split_real_fxp(D00)
-    d10, d11 = split_real_fxp(D11)
-    return (Gram(g00=d00, g10=adj_fft_fxp(d01)),
-            Gram(g00=d10, g10=adj_fft_fxp(d11)))
-
-
 def _ffldl_recurse(L10: PolyC, D00: PolyR, D11: PolyR) -> FFLDLTree:
     """Common recursive tail of both ffLDL entry points. Given a node's LDL
     output (L10, D00, D11), return its tree: a leaf [L10, D00, D11] at n == 2
@@ -157,7 +146,12 @@ def _ffldl_recurse(L10: PolyC, D00: PolyR, D11: PolyR) -> FFLDLTree:
     recurse with the inner ldl_fft_fxp."""
     if len(D00) == 2:
         return [L10, D00, D11]
-    G0, G1 = _child_grams(D00, D11)
+    # split each real diagonal into the child Gram [[d, d'], [adj(d'), d]]
+    # (g00 = d, g10 = adj(d'); g11 == g00 implied — see `Gram`).
+    d00, d01 = split_real_fxp(D00)
+    d10, d11 = split_real_fxp(D11)
+    G0 = Gram(g00=d00, g10=adj_fft_fxp(d01))
+    G1 = Gram(g00=d10, g10=adj_fft_fxp(d11))
     return [L10, ffldl_fft_fxp(G0), ffldl_fft_fxp(G1)]
 
 

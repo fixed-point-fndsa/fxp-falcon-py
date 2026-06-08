@@ -16,9 +16,9 @@ from ntt import mul_zq  # noqa: E402
 from common import q as FALCON_Q  # noqa: E402
 
 from fxtypes import FxR, FxC, retag_value_fxc  # noqa: E402
-from fft_fxp import fft_fxp  # noqa: E402
+from fft_fxp import fft_fxp, retag_poly_fxc  # noqa: E402
 from fxp_constants_p63 import INV_Q_FXC  # noqa: E402  (m=-13, |1/q| ≈ 2^-13.586 < 2^-13)
-from m_budgets import M_POINT_COEF, M_B0_COEF  # noqa: E402
+from m_budgets import M_POINT_COEF, M_B0_COEF, M_B_FG, M_B_FG_UP  # noqa: E402
 
 
 def _div_by_q_fxc(z: FxC, m_out: int) -> FxC:
@@ -108,10 +108,18 @@ def _fft_int_poly_fxp(coefs, m_in, p=63):
 def _build_t_standard_fxp(sk, point, m_sign):
     """Standard target c·d/q built directly in fxp (no float64 detour).
 
-    fxp counterpart of `_build_t_standard`. After mul + (·INV_Q + retag),
-    t lands at (m_sign, 63) with LSB ~2^-45. Returns (t_fxc_pair, None).
+    fxp counterpart of `_build_t_standard`. The B0 rows are retagged to their
+    tight NTRUGen bounds before the products (b = fft(−f) → M_B_FG = 8, γ_fg;
+    d = fft(−F) → M_B_FG_UP = 12, γ_FG): a product rounds to m_out = m_a + m_b,
+    so multiplying at the loose post-FFT tag (m = 21) would land each product at
+    m = 43 (LSB 2^-20) and discard ~9–13 bits. Retagging first lands c·d at
+    m = 34 and c·b at m = 30, so precision survives the ·INV_Q + retag to
+    (m_sign, 63). `c = fft(point)` is left at its structural worst case m = 22
+    (no tighter bound for a random hashed point). Returns (t_fxc_pair, None).
     """
     [_, b_fxc], [_, d_fxc] = _build_B0_fft_fxp_cache(sk)  # b = fft(−f), d = fft(−F)
+    b_fxc = retag_poly_fxc(b_fxc, M_B_FG)        # fft(−f) — γ_fg = 255 < 2^8
+    d_fxc = retag_poly_fxc(d_fxc, M_B_FG_UP)     # fft(−F) — γ_FG = 3500 < 2^12
     c_fxc = _fft_int_poly_fxp(point, M_POINT_COEF)
     t0 = [_div_by_q_fxc(ci * di, m_sign) for ci, di in zip(c_fxc, d_fxc)]
     t1 = [_div_by_q_fxc(-(ci * bi), m_sign) for ci, bi in zip(c_fxc, b_fxc)]

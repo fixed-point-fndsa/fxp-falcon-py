@@ -74,16 +74,34 @@ from m_budgets import (  # noqa: E402
 
 
 def _gram_fft_fxp(B0_fft):
-    """Gram G = B0·adj(B0^T) in FFT domain (pointwise, pure fxp). Entries
-    land at m = 2·m_in. Returns a `RootGram`: g00 = |a|²+|b|² (real),
-    g10 = adj(G_01); G_11 is not computed (see `RootGram`).
+    """Gram G = B0·adj(B0^T) in FFT domain (pointwise, pure fxp).
+
+    The B0 FFT rows are retagged to their tight NTRUGen bounds BEFORE the
+    products: a, b = fft(g), fft(−f) → M_B_FG = 8 (γ_fg = 255, Check 1b);
+    c, d = fft(G), fft(−F) → M_B_FG_UP = 12 (γ_FG = 3500, Check 3). This is
+    not cosmetic: a product rounds to m_out = m_a + m_b, so multiplying at the
+    loose post-FFT tag (m = 21) would land each product at m = 42 (LSB 2^-21)
+    and truncate ~12 bits of the FFT's own precision (|fft(g)|² is good to
+    ~2^-33). Retagging first keeps the products at m = 16 / 20 (LSB ≤ 2^-43),
+    so the Gram is computed at full precision. Products are then widened to the
+    per-entry sum bounds M_G00 = 17 / M_G01 = 21 before the (overflow-prone)
+    additions — the same bounds `_build_fxp_tree_cache` expects.
+
+    Returns a `RootGram`: g00 = |a|²+|b|² (real), g10 = adj(G_01); G_11 is not
+    computed (see `RootGram`).
     """
     [[a, b], [c, d]] = B0_fft
+    a, b = retag_poly_fxc(a, M_B_FG), retag_poly_fxc(b, M_B_FG)        # fft(g), fft(−f) — γ_fg
+    c, d = retag_poly_fxc(c, M_B_FG_UP), retag_poly_fxc(d, M_B_FG_UP)  # fft(G), fft(−F) — γ_FG
     a_adj, b_adj = adj_fft_fxp(a), adj_fft_fxp(b)
     c_adj, d_adj = adj_fft_fxp(c), adj_fft_fxp(d)
-    # G_00 = |a|²+|b|² is Hermitian-real — keep only the real part (PolyR).
-    G00 = [z.re for z in add_fft_fxp(mul_fft_fxp(a, a_adj), mul_fft_fxp(b, b_adj))]
-    G01 = add_fft_fxp(mul_fft_fxp(a, c_adj), mul_fft_fxp(b, d_adj))
+    # G_00 = |a|²+|b|² < 2·γ_fg² < 2^17 (Hermitian-real — keep .re, PolyR);
+    # G_01 = a·c* + b·d* < 2·γ_fg·γ_FG < 2^21. Widen each product to the sum
+    # bound before adding (add needs equal m and the sum overflows the product m).
+    G00 = [z.re for z in add_fft_fxp(retag_poly_fxc(mul_fft_fxp(a, a_adj), M_G00),
+                                     retag_poly_fxc(mul_fft_fxp(b, b_adj), M_G00))]
+    G01 = add_fft_fxp(retag_poly_fxc(mul_fft_fxp(a, c_adj), M_G01),
+                      retag_poly_fxc(mul_fft_fxp(b, d_adj), M_G01))
     return RootGram(g00=G00, g10=adj_fft_fxp(G01))
 
 
@@ -161,9 +179,9 @@ def _build_fxp_tree_cache(sk):
     if sk._fxp_tree is not None:
         return sk._fxp_tree
 
-    # Gram in FFT domain (B0·adj(B0^T)): entries land at m = 2·m_B0 = 42; retag
-    # value-preserving to the per-entry bounds M_G00/M_G01 (NTRUGen Checks 1b/3)
-    # so keygen sees full p-bit precision. g00 real (PolyR), g10 complex.
+    # Gram in FFT domain (B0·adj(B0^T)): `_gram_fft_fxp` already emits g00/g10 at
+    # the tight per-entry bounds M_G00/M_G01 (NTRUGen Checks 1b/3), so these
+    # retags are defensive no-ops (kept to pin the contract keygen relies on).
     gram = _gram_fft_fxp(_build_B0_fft_fxp_cache(sk))
     G_fxp = RootGram(g00=retag_poly_fxr(gram.g00, M_G00),
                      g10=retag_poly_fxc(gram.g10, M_G01))
