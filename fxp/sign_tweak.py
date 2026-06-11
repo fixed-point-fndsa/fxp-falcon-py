@@ -233,7 +233,7 @@ def sample_preimage(sk: SecretKey, point: list[int], use_tweak: int = USE_TWEAK_
         #         (γ_FG tightened from 4096; see ntrugen_filters.py). Lemma 13
         #         drift adds 2·A_child·√n·(γ_root+√2+1) ≈ 2^17.6 (Cholesky
         #         A_child = 2τσ·α_h/√q ≈ 168). Sum ≈ 2^20.93 < 2^21 ⇒ 21.
-        #   tweak: qt = c·d mod^± q centered ⇒ ‖t̂_root‖_∞ < n/2 = 2^8.
+        #   tweak: q·t_frac = (−c·F, c·f) mod^± q centered ⇒ ‖t̂_root‖_∞ < n/2 = 2^8.
         #         drift dominates ⇒ 18 (cf. ffsampling_fxp.M_SIGN_DEFAULT).
         m_sign = M_SIGN_STD if use_tweak == USE_TWEAK_STD else M_SIGN_DEFAULT
         builder = _build_t_tweaked_fxp if use_tweak != USE_TWEAK_STD else _build_t_standard_fxp

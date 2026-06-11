@@ -263,15 +263,11 @@ def ntru_gen(n):
     while True:
         f = gen_poly(n)
         g = gen_poly(n)
-        # Check 1a: gs_norm filter (cheapest pre-filter on f, g).
-        if gs_norm(f, g, q) > (1.17 ** 2) * q:
-            continue
-        # LTYZ countermeasure: ‖(g, −f)‖² odd. The squared norm equals
-        # the sum of f_i² + g_i² over Z; its parity is the parity of
-        # sum(f_i + g_i) (since x² ≡ x mod 2). Cheap to test.
-        if FORCE_ODD_GS_NORM:
-            if (sum(f) + sum(g)) % 2 == 0:
-                continue
+        # Check order mirrors the paper / C implementation (ng_falcon.c):
+        # γ_fg → α_hybrid → α_gpv (gs_norm). The order matters there (fxp:
+        # γ_fg bounds the FFT values α_hybrid consumes; α_hybrid lower-bounds
+        # the gs_norm divisor); here the filters are pure, so any order
+        # accepts the same keys — we mirror the C for consistency.
         # Check 1b: ‖fft(f, g)‖_∞ < γ_fg = 255 strict. Independent of
         # Check 1a (Cauchy-Schwarz on gs_norm gives ‖fft‖_∞ ≤ √n·‖f‖_2 ≈
         # 2933, much looser). Required for m_B_fg = 8 in `_reconstruct_s_fxp`.
@@ -280,6 +276,15 @@ def ntru_gen(n):
         # Check 2: α_hybrid ≤ γ_hybrid = 4.
         if alpha_hybrid_squared(f, g, q) > GAMMA_HYBRID ** 2:
             continue
+        # Check 1a: gs_norm filter (the pre-existing Falcon α_GPV test).
+        if gs_norm(f, g, q) > (1.17 ** 2) * q:
+            continue
+        # LTYZ countermeasure: ‖(g, −f)‖² odd. The squared norm equals
+        # the sum of f_i² + g_i² over Z; its parity is the parity of
+        # sum(f_i + g_i) (since x² ≡ x mod 2). Cheap to test.
+        if FORCE_ODD_GS_NORM:
+            if (sum(f) + sum(g)) % 2 == 0:
+                continue
         f_ntt = ntt(f)
         if any((elem == 0) for elem in f_ntt):
             continue

@@ -104,10 +104,11 @@ def nr_reciprocal(b: FxR) -> FxR:
     [2^13, 2^14) (an exact label-only retag), seed y0 = sign(b)/q so
     |e0| = |1 − |b'|/q| ≤ 0.333 (⇒ e_k = e0^{2^k}, quadratic), then denormalize
     1/b = (1/b')·2^-k (exact). 6 iters reach |e| ≪ 2^-63 (e_6 ≈ 3e-31); p=127
-    needs 7 (e_7 ≈ 8e-62). The 2^±k shifts are lossless, so the only error is
-    ~1 ULP/step fxp rounding — input-limited (e.g. ~2^-57 for a divisor stored
-    at m=18). Not constant-time (bit_length normalization) — division is
-    keygen-only, so acceptable."""
+    needs 7 (e_7 ≈ 8e-62). The 2^±k shifts are lossless and b_norm is
+    retagged to the tight m=14, so the only error is ~1 ULP/step fxp rounding
+    at the binade's own scale — ~2^-59 relative across the whole domain,
+    independent of the input's m tag. Not constant-time (bit_length
+    normalization) — division is keygen-only, so acceptable."""
     p = b.p
     assert b.x != 0, "nr_reciprocal: division by zero"
     # value(b) = b.x·2^{b.m-p}; e_b = floor(log2 |value|) (bit_length ignores sign).
@@ -121,7 +122,12 @@ def nr_reciprocal(b: FxR) -> FxR:
         f"nr_reciprocal: |b| outside [q/16, 16q] (floor log2 = {e_b}, expect [9, 17])"
     )
     k = e_b - _RECIP_BINADE
-    b_norm = FxR(x=b.x, m=b.m - k, p=p)              # |value| ∈ [2^13, 2^14), exact
+    # Label-only normalization (exact), then tighten the tag to the binade's
+    # tight bound m = 14 (|value| ∈ [2^13, 2^14), and m_norm = b.m − e_b + 13
+    # ≥ 14 always, so the retag is an exact left shift). A loose input tag
+    # (e.g. an m=18 divisor near q/16) would otherwise set the loop's mul LSB
+    # at 2^{m_b+m_y−p} and cost ~1 bit of accuracy per binade of label slack.
+    b_norm = retag_value_fxr(FxR(x=b.x, m=b.m - k, p=p), _RECIP_BINADE + 1)
 
     seed = _INV_Q_BY_P[p]                            # 1/q (m ≈ -13)
     # 1/b' ∈ (2^-14, 2^-13]; its tight magnitude bound is seed.m+1 (the top,

@@ -60,7 +60,7 @@ M_B0_COEF = 13
 # --------------------------------------------------------------------- #
 
 # m of t/z throughout ffsampling.
-#   tweak path: qt = c·d mod^± q centered ⇒ ‖t̂_root‖_∞ ≤ n/2 = 2^8; Lemma 13
+#   tweak path: q·t_frac = (−c·F, c·f) mod^± q centered ⇒ ‖t̂_root‖_∞ ≤ n/2 = 2^8; Lemma 13
 #     drift ≈ 2^17.61 dominates ⇒ 18.
 M_SIGN_DEFAULT = 18
 #   std path: point ∈ [0,q) ⇒ ‖t̂_root‖_∞ < n·γ_FG ≈ 2^20.77 + drift ≈ 2^20.93 ⇒ 21.

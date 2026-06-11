@@ -5,7 +5,12 @@ Twiddle constants live at (m=1, p), selected by input's p (63 or 127).
 Under the complex-modulus convention, multiplying by a unit twiddle
 widens m by +1 (from the m_w=1 label), and each merge level grows the
 output m by +1 (structurally, from the butterfly sum |a ± w·b| ≤ 2·max).
-Full FFT of a length-n input: m_out = m_in + log₂(n) − 1.
+Full FFT of a length-n input: m_out = m_in + log₂(n) − 1. Caveat: the n=2
+base case keeps the label m_in although its output MODULUS can reach
+√2·2^{m_in} (components stay < 2^{m_in}), so the m_out contract carries a
+half-bit deficit for inputs that saturate m_in — such adversarial inputs
+trip a butterfly's |x| < 2^p assert (loud, not silent). Pipeline inputs
+keep multi-bit modulus margins that absorb it.
 
 Magnitude changes use `retag_value_fxc(z, m_new)` (value-preserving; x is
 banker's-shifted): to widen m before the butterfly sums and to bring split's
@@ -50,7 +55,9 @@ def fft_fxp(f: PolyR) -> PolyC:
     n = len(f)
     assert n >= 2 and (n & (n - 1)) == 0, "n must be a power of 2"
     if n == 2:
-        # f_fft = [f[0] + i·f[1], f[0] − i·f[1]]; no magnitude growth.
+        # f_fft = [f[0] + i·f[1], f[0] − i·f[1]]. Components unchanged, but
+        # the MODULUS can reach √2·2^{m_in}: the kept label m_in is √2-loose
+        # vs the complex-modulus convention (see module docstring caveat).
         return [FxC(re=f[0], im=f[1]), FxC(re=f[0], im=-f[1])]
     return merge_fft_fxp([fft_fxp(f[0::2]), fft_fxp(f[1::2])])
 

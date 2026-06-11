@@ -208,9 +208,12 @@ class FxC:
         the exact integer expression. Rounding error at most 2^{m_1+m_2-p-1}
         per component.
 
-        Correctness of the |x_out| < 2^p invariant follows from Lagrange:
-        (ac - bd)^2 + (ad + bc)^2 = (a^2 + b^2)(c^2 + d^2), so the output
-        components satisfy the same invariant as the inputs.
+        The |x_out| < 2^p invariant holds for the EXACT product by Lagrange:
+        (ac - bd)^2 + (ad + bc)^2 = (a^2 + b^2)(c^2 + d^2). The banker's
+        shift then adds up to half an ULP per component, so an input within
+        ~2^-p (relative) of the modulus bound 2^{m1+m2} can round a
+        component exactly to 2^p and trip the __post_init__ assert (loud,
+        not silent). Pipeline values keep multi-bit modulus margins.
         """
         assert (
             self.p == other.p
