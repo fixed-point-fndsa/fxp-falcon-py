@@ -19,7 +19,9 @@ jobs:
           enable-cache: true
 
       - name: Unit tests (fxp types, Newton-Raphson, arithmetic)
-        run: uv run pytest -q
+        # scoped to tests/: the experiments/ scripts need the optional
+        # experiments dependency group (mpmath, matplotlib)
+        run: uv run pytest -q tests/
 
       - name: Numerical test vectors (fxp pipeline KAT)
         run: uv run python tests/check_test_vectors.py
