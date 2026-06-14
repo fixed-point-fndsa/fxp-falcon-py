@@ -119,24 +119,23 @@ def _reconstruct_s_fxp(sk, t_fxp, z_fxc, m_sign):
     """Compute s = (t − z)·B in FxC, then ifft to integer polynomials.
 
     B0 rows arrive at their tight γ bounds from `_build_B0_fft_fxp_cache`.
-    m_s_inter = 19 is the common format for the `add` of the two products: it
+    M_S_INTER (= 19) is the common format for the `add` of the two products: it
     holds each product (max |diff·B| ≈ 2^17.76 over the small LTYZ residual t−z),
     not the smaller post-cancellation sum. Sized for Falcon-512 (asserted below).
     """
     assert sk.n == 512, f"_reconstruct_s_fxp: Falcon-512 only (sk.n={sk.n})"
-    m_s_inter = M_S_INTER  # see m_budgets.py
     [a_fxc, b_fxc], [c_fxc, d_fxc] = _build_B0_fft_fxp_cache(sk)  # tight γ bounds (cache)
 
     diff0 = sub_fft_fxp(t_fxp[0], z_fxc[0])
     diff1 = sub_fft_fxp(t_fxp[1], z_fxc[1])
 
     # s_j = diff0·B[0][j] + diff1·B[1][j]. `mul_fft_to` emits each product
-    # straight at the common m_s_inter (single round), so the two summands
-    # share m for the add — no separate product→m_s_inter retag.
-    s0_fxc = add_fft_fxp(mul_fft_to(diff0, a_fxc, m_s_inter),
-                         mul_fft_to(diff1, c_fxc, m_s_inter))
-    s1_fxc = add_fft_fxp(mul_fft_to(diff0, b_fxc, m_s_inter),
-                         mul_fft_to(diff1, d_fxc, m_s_inter))
+    # straight at the common M_S_INTER (single round), so the two summands
+    # share m for the add — no separate product→M_S_INTER retag.
+    s0_fxc = add_fft_fxp(mul_fft_to(diff0, a_fxc, M_S_INTER),
+                         mul_fft_to(diff1, c_fxc, M_S_INTER))
+    s1_fxc = add_fft_fxp(mul_fft_to(diff0, b_fxc, M_S_INTER),
+                         mul_fft_to(diff1, d_fxc, M_S_INTER))
 
     # ifft then banker's-shift to nearest integer (pure int, no float).
     def _ifft_round(poly):
@@ -162,9 +161,8 @@ def _build_fxp_tree_cache(sk):
     # relies on, so we assert the contract instead of retagging.
     gram = _gram_fft_fxp(_build_B0_fft_fxp_cache(sk))
     assert gram.g00[0].m == M_G00 and gram.g10[0].m == M_G01
-    G_fxp = gram
 
-    tree = keygen_fxp(G_fxp, q=FALCON_Q, inv_sigma=_inv_sigma_fxp(sk),
+    tree = keygen_fxp(gram, q=FALCON_Q, inv_sigma=_inv_sigma_fxp(sk),
                       sigmin=_sigmin_fxp(sk))
     sk._fxp_tree = tree
     return tree

@@ -69,7 +69,7 @@ def ldl_fft_fxp_ntru_root(G: RootGram, q: int) -> tuple[PolyC, PolyR, PolyR]:
     D00 = retag_poly_fxr(G00, M_D)
     # det(G) = q² (symplectic) ⇒ D_11 = q²/G_00 componentwise; real. Use the
     # NR reciprocal (1/G_00) then multiply, matching div_fft_fxp.
-    q_sq_fxr = FxR.from_int(q * q, m=max(1, (q * q).bit_length()), p=p)
+    q_sq_fxr = FxR.from_int(q * q, m=(q * q).bit_length(), p=p)
     D11 = [retag_fxr(q_sq_fxr * nr_reciprocal(u), M_D) for u in G00]
     return L10, D00, D11
 

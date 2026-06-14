@@ -10,7 +10,7 @@ from typing import Callable, Literal
 
 from beartype import beartype
 
-from fxtypes import FxR, retag_fxr
+from fxtypes import FxR, retag_fxr, _bankers_shift
 
 
 # Constants (Falcon spec / reference samplerz).
@@ -64,8 +64,6 @@ RCDT_ROUND = [
     2496,
     14,
 ]
-# Backwards-compat alias (same as samplerz.py).
-RCDT = RCDT_FLOOR
 
 # Polynomial coefficients for exp approximation (lifted from FACCT, same as reference).
 _C = [
@@ -100,31 +98,31 @@ def _floor_value(a: FxR) -> int:
     return a.x if scale == 0 else a.x >> scale
 
 
-def _floor_and_frac(a: FxR) -> tuple[int, FxR]:
-    """Split a = s + r with s = floor(a.value) ∈ Z, r ∈ [0, 1).
-    r is returned in the same format as a (r.x = a.x − s · 2^(p−m))."""
-    s = _floor_value(a)
-    return s, FxR(x=a.x - (s << (a.p - a.m)), m=a.m, p=a.p)
-
-
 def _round_value(a: FxR) -> int:
     """Round-half-to-even of a.value as a Python int.
 
     Equivalent to Python's ``round(a.value)`` but in pure integer
     arithmetic — the same banker's-shift used everywhere in fxtypes.
     """
-    from fxtypes import _bankers_shift  # local to avoid module-load cycle
     scale = a.p - a.m
     if scale == 0:
         return a.x
     return _bankers_shift(a.x, scale)
 
 
-def _round_and_frac(a: FxR) -> tuple[int, FxR]:
-    """Split a = s + r with s = round(a.value) ∈ Z, r ∈ [−1/2, 1/2).
-    r is returned in the same format as a (r.x = a.x − s · 2^(p−m))."""
-    s = _round_value(a)
+def _split(a: FxR, s: int) -> tuple[int, FxR]:
+    """Return (s, r) with r = a − s in a's format (r.x = a.x − s · 2^(p−m))."""
     return s, FxR(x=a.x - (s << (a.p - a.m)), m=a.m, p=a.p)
+
+
+def _floor_and_frac(a: FxR) -> tuple[int, FxR]:
+    """a = s + r, s = floor(a) ∈ Z, r ∈ [0, 1)."""
+    return _split(a, _floor_value(a))
+
+
+def _round_and_frac(a: FxR) -> tuple[int, FxR]:
+    """a = s + r, s = round(a) ∈ Z, r ∈ [−1/2, 1/2)."""
+    return _split(a, _round_value(a))
 
 
 def _scale_to_p(a: FxR) -> int:
@@ -188,8 +186,8 @@ def berexp_fxp(x: FxR, ccs: FxR,
     """Return 1 with probability ~ ccs · exp(-x). x.value ≥ 0 expected.
 
     Splits x = s·ln2 + r with s ∈ N, r ∈ [0, ln2), then exp(-x) =
-    2^{-s}·exp(-r). s is capped at 63 so (approxexp >> s) stays nonzero;
-    clamped at 0 to absorb tiny negative x from fp drift upstream.
+    2^{-s}·exp(-r). s is capped at 63 so (approxexp >> s) stays nonzero
+    (s ≥ 0 is guaranteed by the x ≥ 0 precondition below).
     """
     assert x.p == _P and ccs.p == _P
     # x ≥ 0 is a precondition: the integer-part extraction below truncates toward
@@ -197,17 +195,14 @@ def berexp_fxp(x: FxR, ccs: FxR,
     assert x.x >= 0, f"berexp_fxp: x<0 (x.x={x.x}, m={x.m} ≈ {x.to_float():.3e}); upstream ULP drift"
     s_int = _floor_value(x * ILN2_FXR)
 
-    # r = x − s·ln2.
-    if s_int == 0:
-        r_fxr = x
-    else:
-        s_ln2 = FxR.from_int(s_int, m=x.m, p=_P) * LN2_FXR
-        r_fxr = x - s_ln2
+    # r = x − s·ln2 (exact when s_int=0: from_int(0)·ln2 = 0, x − 0 = x).
+    s_ln2 = FxR.from_int(s_int, m=x.m, p=_P) * LN2_FXR
+    r_fxr = x - s_ln2
     # r ∈ [0, ln2) ⊂ [0, 1) → m=0 tight (mandatory for approxexp_fxp).
     # Banker-shift drops ≤ ~6 LSBs (residual ~2^-57, ≫ samplerz sensitivity).
     r_fxr = retag_fxr(r_fxr, 0)
 
-    s_int = max(0, min(s_int, 63))
+    s_int = min(s_int, 63)
     z = (approxexp_fxp(r_fxr, ccs) - 1) >> s_int
 
     # Byte-wise Bernoulli comparison (identical to reference).

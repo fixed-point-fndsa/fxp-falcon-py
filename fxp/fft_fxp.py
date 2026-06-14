@@ -74,7 +74,7 @@ def merge_fft_fxp(f_list_fft: list[PolyC]) -> PolyC:
     out = [None] * n
     for i in range(n // 2):
         w_f1 = w[2 * i] * f1_fft[i]                              # (m_k + 1, p)
-        f0_wide = retag_fxc(f0_fft[i], f0_fft[i].re.m + 1)  # widen m by 1
+        f0_wide = retag_fxc(f0_fft[i], f0_fft[i].m + 1)  # widen m by 1
         out[2 * i] = f0_wide + w_f1
         out[2 * i + 1] = f0_wide - w_f1
     return out
@@ -142,7 +142,7 @@ def adj_fft_fxp(f: PolyC) -> PolyC:
 def retag_poly_fxc(poly: PolyC, m_new: int) -> PolyC:
     """Value-preserving retag of every element in a PolyC to m_new.
     No-op (returns the same list) if already at m_new."""
-    if not poly or poly[0].re.m == m_new:
+    if not poly or poly[0].m == m_new:
         return poly
     return [retag_fxc(z, m_new) for z in poly]
 

@@ -31,7 +31,7 @@ from fft_fxp import (
     retag_poly_fxc,
 )
 from samplerz_fxp import samplerz_fxp
-from m_budgets import M_SIGN_DEFAULT  # noqa: F401 (re-exported; see m_budgets.py)
+from m_budgets import M_SIGN_DEFAULT
 
 
 @beartype

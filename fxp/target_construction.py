@@ -46,6 +46,18 @@ def _center_signed(poly, modulus):
     return [(c - modulus) if c > half else c for c in poly]
 
 
+def _build_qt(sk, point):
+    """NTT-exact (q·t0, q·t1) = (−c·F, c·f) mod^± q, centered to [−q/2, q/2].
+    Pure integer arithmetic, shared by the float and fxp Section-5.1 builders."""
+    q = FALCON_Q
+    F_zq = [c % q for c in sk.F]
+    f_zq = [c % q for c in sk.f]
+    c_zq = list(point)
+    qt0 = _center_signed(mul_zq([(-ci) % q for ci in c_zq], F_zq), q)
+    qt1 = _center_signed(mul_zq(c_zq, f_zq), q)
+    return qt0, qt1
+
+
 # --------------------------------------------------------------------- #
 # Float reference builders.
 # --------------------------------------------------------------------- #
@@ -69,11 +81,7 @@ def _build_t_tweaked(sk, point):
     z_std = z_tweaked + t_int relation. Lemma 14 gives distributional
     equivalence with the standard target."""
     q = FALCON_Q
-    F_zq = [c % q for c in sk.F]
-    f_zq = [c % q for c in sk.f]
-    c_zq = list(point)
-    qt0 = _center_signed(mul_zq([(-ci) % q for ci in c_zq], F_zq), q)
-    qt1 = _center_signed(mul_zq(c_zq, f_zq), q)
+    qt0, qt1 = _build_qt(sk, point)
     t0_fft = [z / q for z in fft([float(c) for c in qt0])]
     t1_fft = [z / q for z in fft([float(c) for c in qt1])]
     return [t0_fft, t1_fft], [qt0, qt1]
@@ -137,10 +145,7 @@ def _build_t_tweaked_fxp(sk, point, m_sign):
     rounding is the banker's-shift in fft_fxp + ·INV_Q + retag. Output at
     (m_sign, 63). Returns (t_fxc_pair, [qt0, qt1]).
     """
-    q = FALCON_Q
-    F_zq, f_zq, c_zq = [c % q for c in sk.F], [c % q for c in sk.f], list(point)
-    qt0 = _center_signed(mul_zq([(-ci) % q for ci in c_zq], F_zq), q)
-    qt1 = _center_signed(mul_zq(c_zq, f_zq), q)
+    qt0, qt1 = _build_qt(sk, point)
     # |qt| < q/2 < 2^13; FFT widens to m=21 (n=512); mul·INV_Q gives m_sign.
     t0 = [_div_by_q_fxc(z, m_sign) for z in _fft_int_poly_fxp(qt0, M_B0_COEF)]
     t1 = [_div_by_q_fxc(z, m_sign) for z in _fft_int_poly_fxp(qt1, M_B0_COEF)]
