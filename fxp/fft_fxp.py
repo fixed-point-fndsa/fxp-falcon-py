@@ -12,15 +12,13 @@ half-bit deficit for inputs that saturate m_in — such adversarial inputs
 trip a butterfly's |x| < 2^p assert (loud, not silent). Pipeline inputs
 keep multi-bit modulus margins that absorb it.
 
-Magnitude changes use `retag_value_fxc(z, m_new)` (value-preserving; x is
-banker's-shifted): to widen m before the butterfly sums and to bring split's
-f1 back to m. The split's exact ÷2 is a label-only change (keep x, drop the
-exponent) done inline in `split_complex_fxp` (see `_halve`).
+Magnitude changes use `retag_fxc` (value-preserving): widen m before the
+butterfly sums, bring split's f1 back to m. Split's ÷2 is a label-only retag.
 """
 
 from beartype import beartype
 
-from fxtypes import FxR, FxC, PolyR, PolyC, retag_value_fxr, retag_value_fxc
+from fxtypes import FxR, FxC, PolyR, PolyC, retag_fxr, retag_fxc
 from fxp_constants_p63 import roots_dict_fxp as _roots_p63
 from fxp_constants_p127 import roots_dict_fxp as _roots_p127
 from nr_fxp import nr_reciprocal
@@ -76,7 +74,7 @@ def merge_fft_fxp(f_list_fft: list[PolyC]) -> PolyC:
     out = [None] * n
     for i in range(n // 2):
         w_f1 = w[2 * i] * f1_fft[i]                              # (m_k + 1, p)
-        f0_wide = retag_value_fxc(f0_fft[i], f0_fft[i].re.m + 1)  # widen m by 1
+        f0_wide = retag_fxc(f0_fft[i], f0_fft[i].re.m + 1)  # widen m by 1
         out[2 * i] = f0_wide + w_f1
         out[2 * i + 1] = f0_wide - w_f1
     return out
@@ -127,6 +125,14 @@ def mul_fft_fxp(f: PolyC, g: PolyC) -> PolyC:
     return [a * b for a, b in zip(f, g)]
 
 @beartype
+def mul_fft_to(f: PolyC, g: PolyC, m_out: int) -> PolyC:
+    """Pointwise FxC multiply emitting directly at the budget m_out (fused
+    multiply-and-retag, single round). Replaces the common idiom
+    `retag_poly_fxc(mul_fft_fxp(f, g), m_out)` — one rounding instead of two
+    (see `FxC.mul_to`). NOT bit-identical to that idiom, but more accurate."""
+    return [a.mul_to(b, m_out) for a, b in zip(f, g)]
+
+@beartype
 def adj_fft_fxp(f: PolyC) -> PolyC:
     """Complex conjugate (= FFT-domain adjoint of a real poly)."""
     return [z.conjugate() for z in f]
@@ -138,7 +144,7 @@ def retag_poly_fxc(poly: PolyC, m_new: int) -> PolyC:
     No-op (returns the same list) if already at m_new."""
     if not poly or poly[0].re.m == m_new:
         return poly
-    return [retag_value_fxc(z, m_new) for z in poly]
+    return [retag_fxc(z, m_new) for z in poly]
 
 
 @beartype
@@ -147,7 +153,7 @@ def retag_poly_fxr(poly: PolyR, m_new: int) -> PolyR:
     counterpart of `retag_poly_fxc`). No-op if already at m_new."""
     if not poly or poly[0].m == m_new:
         return poly
-    return [retag_value_fxr(z, m_new) for z in poly]
+    return [retag_fxr(z, m_new) for z in poly]
 
 
 @beartype
@@ -160,8 +166,8 @@ def div_fft_fxp(f: PolyC, g: PolyR, m_out: int) -> PolyC:
     out = []
     for a, b in zip(f, g):
         r = nr_reciprocal(b)                         # 1/g[i]
-        out.append(FxC(re=retag_value_fxr(a.re * r, m_out),
-                       im=retag_value_fxr(a.im * r, m_out)))
+        out.append(FxC(re=retag_fxr(a.re * r, m_out),
+                       im=retag_fxr(a.im * r, m_out)))
     return out
 
 
@@ -184,11 +190,11 @@ def split_complex_fxp(f_fft: PolyC) -> tuple[PolyC, PolyC]:
         return FxC(re=FxR(x=z.re.x, m=m, p=p), im=FxR(x=z.im.x, m=m, p=p))
 
     for i in range(n // 2):
-        a = retag_value_fxc(f_fft[2 * i], m + 1)
-        b = retag_value_fxc(f_fft[2 * i + 1], m + 1)
+        a = retag_fxc(f_fft[2 * i], m + 1)
+        b = retag_fxc(f_fft[2 * i + 1], m + 1)
         f0[i] = _halve(a + b)
         f1_wide = _halve(a - b) * w[2 * i].conjugate()  # mul widens to m+1
-        f1[i] = retag_value_fxc(f1_wide, m)             # lossless left-shift to m
+        f1[i] = retag_fxc(f1_wide, m)             # lossless left-shift to m
     return f0, f1
 
 

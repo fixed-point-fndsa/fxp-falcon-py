@@ -27,7 +27,7 @@ from beartype import beartype
 
 from fxtypes import FxR, FxC, PolyC, FFLDLTree
 from fft_fxp import (
-    add_fft_fxp, sub_fft_fxp, mul_fft_fxp, split_complex_fxp, merge_fft_fxp,
+    add_fft_fxp, sub_fft_fxp, mul_fft_to, split_complex_fxp, merge_fft_fxp,
     retag_poly_fxc,
 )
 from samplerz_fxp import samplerz_fxp
@@ -46,23 +46,24 @@ def ffsampling_fxp(t: list[PolyC], tree: FFLDLTree,
     if n == 1:
         # Leaf: `tree` is [dss_i, ccs_i] (precomputed samplerz constants).
         dss_leaf, ccs_leaf = tree[0], tree[1]
-        assert isinstance(dss_leaf, FxR), (
-            f"expected leaf [dss_FxR, ccs_FxR], got {type(dss_leaf).__name__}"
-        )
+        assert isinstance(dss_leaf, FxR), f"leaf must be FxR, got {type(dss_leaf).__name__}"
         z0 = samplerz_fxp(t[0][0].re, dss_leaf, ccs_leaf, randombytes=randombytes)
         z1 = samplerz_fxp(t[1][0].re, dss_leaf, ccs_leaf, randombytes=randombytes)
         # Defensive: |z| ≲ 2^17.6 by Lemma 13, ≪ 2^m_sign=2^18. Catches
         # drift if Lemma 13 premises ever break (e.g. n=1024, larger γ_root).
-        assert abs(z0) < (1 << m_sign) and abs(z1) < (1 << m_sign), (
-            f"|z|={max(abs(z0), abs(z1))} exceeds 2^m_sign=2^{m_sign} budget"
-        )
+        assert abs(z0) < (1 << m_sign) and abs(z1) < (1 << m_sign), \
+            f"|z|={max(abs(z0), abs(z1))} ≥ 2^{m_sign}"
         return [[FxC.from_int(z0, m_sign, 63)], [FxC.from_int(z1, m_sign, 63)]]
 
     l10_fft, tree0, tree1 = tree
 
     def _recurse(t_in, subtree):
         """Split → recurse → merge, keeping everything at m_sign."""
-        t_split = [retag_poly_fxc(p_, m_sign) for p_ in split_complex_fxp(t_in)]
+        # split preserves the input m, and t is always at m_sign by construction
+        # (the caller builds t at m_sign; t0p and every recursive t_split stay
+        # there), so the split output needs no retag — assert the invariant.
+        t_split = list(split_complex_fxp(t_in))
+        assert t_split[0][0].re.m == m_sign, f"split m={t_split[0][0].re.m} != m_sign={m_sign}"
         z_sub = ffsampling_fxp(t_split, subtree, randombytes, m_sign)
         return retag_poly_fxc(merge_fft_fxp(z_sub), m_sign)
 
@@ -70,7 +71,7 @@ def ffsampling_fxp(t: list[PolyC], tree: FFLDLTree,
     z1_fft = _recurse(t[1], tree1)
     # Reduced target: t_0' = t_0 + (t_1 − z_1) · L_10.
     diff = sub_fft_fxp(t[1], z1_fft)
-    prod = retag_poly_fxc(mul_fft_fxp(diff, l10_fft), m_sign)
+    prod = mul_fft_to(diff, l10_fft, m_sign)
     t0p = add_fft_fxp(t[0], prod)
     # Left: sample z_0 from t_0'.
     z0_fft = _recurse(t0p, tree0)

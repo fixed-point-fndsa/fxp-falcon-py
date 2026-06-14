@@ -23,7 +23,7 @@ runs only on keys passing the full NTRUGen filter, so no fallback is needed.
 from beartype import beartype
 
 from fxtypes import (FxR, PolyR, PolyC, Gram, RootGram, FFLDLTree,
-                     retag_value_fxr)
+                     retag_fxr)
 from fft_fxp import (
     adj_fft_fxp,
     mul_fft_fxp,
@@ -47,10 +47,7 @@ def ldl_fft_fxp(G: Gram) -> tuple[PolyC, PolyR, PolyR]:
     """
     G00, G10 = G.g00, G.g10
     ms = (G00[0].m, G10[0].m)
-    assert all(m == M_D for m in ms), (
-        f"ldl_fft_fxp: expected every G entry at M_D={M_D}; "
-        f"got (m_G00, m_G10)={ms}"
-    )
+    assert all(m == M_D for m in ms), f"ldl_fft_fxp: G entries {ms} != M_D={M_D}"
     L10 = div_fft_fxp(G10, G00, m_out=M_L10_INNER)
     prod = mul_fft_fxp(adj_fft_fxp(L10), G10)        # = |G10|²/G00, real (im == 0)
     D11 = [g00 - pr.re for g00, pr in zip(G00, prod)]
@@ -73,7 +70,7 @@ def ldl_fft_fxp_ntru_root(G: RootGram, q: int) -> tuple[PolyC, PolyR, PolyR]:
     # det(G) = q² (symplectic) ⇒ D_11 = q²/G_00 componentwise; real. Use the
     # NR reciprocal (1/G_00) then multiply, matching div_fft_fxp.
     q_sq_fxr = FxR.from_int(q * q, m=max(1, (q * q).bit_length()), p=p)
-    D11 = [retag_value_fxr(q_sq_fxr * nr_reciprocal(u), M_D) for u in G00]
+    D11 = [retag_fxr(q_sq_fxr * nr_reciprocal(u), M_D) for u in G00]
     return L10, D00, D11
 
 
@@ -90,14 +87,14 @@ def _normalize_leaf_poly(poly, inv_sigma: FxR, sigmin: FxR, iters: int):
     # Tighten the leaf D_ii from the shared M_D=18 to M_D_LEAF=15 (value-
     # preserving): a final leaf satisfies D_ii ≤ 1.17²q < 2^15 (gs_norm), so this
     # sharpens rsqrt's intermediates (m_xy = 15−12 = 3) and σ_i by ~3 bits.
-    a_re = retag_value_fxr(poly[0], M_D_LEAF)
+    a_re = retag_fxr(poly[0], M_D_LEAF)
     y = rsqrt(a_re, iters=iters)
     sqrt_D = a_re * y                                              # √D_ii
-    inv_sigma_i = retag_value_fxr(sqrt_D * inv_sigma, M_NORM_OUT)  # 1/σ_i (m=0)
+    inv_sigma_i = retag_fxr(sqrt_D * inv_sigma, M_NORM_OUT)  # 1/σ_i (m=0)
     inv_sq = inv_sigma_i * inv_sigma_i
     half = FxR(x=inv_sq.x, m=inv_sq.m - 1, p=inv_sq.p)            # ÷2 exact
-    dss_i = retag_value_fxr(half, M_NORM_OUT)                      # 1/(2σ_i²)
-    ccs_i = retag_value_fxr(sigmin * inv_sigma_i, M_NORM_OUT)      # σ_min/σ_i
+    dss_i = retag_fxr(half, M_NORM_OUT)                      # 1/(2σ_i²)
+    ccs_i = retag_fxr(sigmin * inv_sigma_i, M_NORM_OUT)      # σ_min/σ_i
     return [dss_i, ccs_i]
 
 

@@ -37,7 +37,7 @@ Design notes for the FFT roots:
       longer grow m by +1 per merge level.
     - m_fft = 1 is the default (exact phi_4, no pre-scaling). Switching
       to m_fft=0 was explored in May 2026 and rejected: the lossless
-      `retag_value_fxc(f1, m)` introduced in `split_fft_fxp` already
+      `retag_fxc(f1, m)` introduced in `split_fft_fxp` already
       achieves the same downstream simplification WITHOUT modifying the
       twiddle constants.
     - Convention for roots_dict matches the float reference: roots_dict[n]

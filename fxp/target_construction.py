@@ -15,7 +15,7 @@ from fft import fft  # noqa: E402
 from ntt import mul_zq  # noqa: E402
 from common import q as FALCON_Q  # noqa: E402
 
-from fxtypes import FxR, FxC, retag_value_fxc  # noqa: E402
+from fxtypes import FxR, FxC, retag_fxc  # noqa: E402
 from fft_fxp import fft_fxp, retag_poly_fxc  # noqa: E402
 from fxp_constants_p63 import INV_Q_FXC  # noqa: E402  (m=-13, |1/q| ≈ 2^-13.586 < 2^-13)
 from m_budgets import M_POINT_COEF, M_B0_COEF, M_B_FG, M_B_FG_UP  # noqa: E402
@@ -26,7 +26,7 @@ def _div_by_q_fxc(z: FxC, m_out: int) -> FxC:
     value-preserving retag aligns to m_out. Bit-output differs from an
     exact `/ q` by at most 2^-34 absolute (well below the samplerz
     boundary sensitivity ~2^-15)."""
-    return retag_value_fxc(z * INV_Q_FXC, m_out)
+    return retag_fxc(z * INV_Q_FXC, m_out)
 
 
 # Tweak variant labels (single source of truth). Passed as `use_tweak` to
@@ -91,12 +91,21 @@ def _build_t_tweaked(sk, point):
 
 
 def _build_B0_fft_fxp_cache(sk, p=63):
-    """Lazily build & cache fxp FFT of B0 = [[g, −f], [G, −F]] on sk."""
+    """Lazily build & cache the fxp FFT of B0 = [[g, −f], [G, −F]] on sk, each
+    row retagged once to its tight NTRUGen bound (fft(g), fft(−f) → M_B_FG;
+    fft(G), fft(−F) → M_B_FG_UP). Baking the retag here (an exact left-shift from
+    the loose post-FFT m=21) lets every consumer see the tight m directly —
+    bit-identical to the old per-consumer retags, but run once per key.
+    """
     if sk._B0_fft_fxp is not None:
         return sk._B0_fft_fxp
     rows = [[sk.g, [-c for c in sk.f]], [sk.G, [-c for c in sk.F]]]
-    sk._B0_fft_fxp = [[fft_fxp([FxR.from_int(c, m=M_B0_COEF, p=p) for c in poly])
+    [a, b], [c, d] = [[fft_fxp([FxR.from_int(co, m=M_B0_COEF, p=p) for co in poly])
                        for poly in row] for row in rows]
+    sk._B0_fft_fxp = [
+        [retag_poly_fxc(a, M_B_FG), retag_poly_fxc(b, M_B_FG)],        # fft(g), fft(−f) — γ_fg
+        [retag_poly_fxc(c, M_B_FG_UP), retag_poly_fxc(d, M_B_FG_UP)],  # fft(G), fft(−F) — γ_FG
+    ]
     return sk._B0_fft_fxp
 
 
@@ -108,18 +117,13 @@ def _fft_int_poly_fxp(coefs, m_in, p=63):
 def _build_t_standard_fxp(sk, point, m_sign):
     """Standard target c·d/q built directly in fxp (no float64 detour).
 
-    fxp counterpart of `_build_t_standard`. The B0 rows are retagged to their
-    tight NTRUGen bounds before the products (b = fft(−f) → M_B_FG = 8, γ_fg;
-    d = fft(−F) → M_B_FG_UP = 12, γ_FG): a product rounds to m_out = m_a + m_b,
-    so multiplying at the loose post-FFT tag (m = 21) would land each product at
-    m = 43 (LSB 2^-20) and discard ~9–13 bits. Retagging first lands c·d at
-    m = 34 and c·b at m = 30, so precision survives the ·INV_Q + retag to
-    (m_sign, 63). `c = fft(point)` is left at its structural worst case m = 22
-    (no tighter bound for a random hashed point). Returns (t_fxc_pair, None).
+    fxp counterpart of `_build_t_standard`. The B0 rows arrive pre-retagged to
+    their tight γ bounds from `_build_B0_fft_fxp_cache`, so the products keep
+    precision through the ·INV_Q and retag to (m_sign, 63). `c = fft(point)` is
+    left at its worst-case m=22 (no tighter bound for a random hashed point).
+    Returns (t_fxc_pair, None).
     """
-    [_, b_fxc], [_, d_fxc] = _build_B0_fft_fxp_cache(sk)  # b = fft(−f), d = fft(−F)
-    b_fxc = retag_poly_fxc(b_fxc, M_B_FG)        # fft(−f) — γ_fg = 255 < 2^8
-    d_fxc = retag_poly_fxc(d_fxc, M_B_FG_UP)     # fft(−F) — γ_FG = 3500 < 2^12
+    [_, b_fxc], [_, d_fxc] = _build_B0_fft_fxp_cache(sk)  # fft(−f) @M_B_FG, fft(−F) @M_B_FG_UP
     c_fxc = _fft_int_poly_fxp(point, M_POINT_COEF)
     t0 = [_div_by_q_fxc(ci * di, m_sign) for ci, di in zip(c_fxc, d_fxc)]
     t1 = [_div_by_q_fxc(-(ci * bi), m_sign) for ci, bi in zip(c_fxc, b_fxc)]

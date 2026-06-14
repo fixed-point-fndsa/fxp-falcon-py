@@ -43,8 +43,7 @@ from encoding import compress  # noqa: E402
 # fxp side.
 from fxtypes import _bankers_shift, RootGram  # noqa: E402
 from fft_fxp import (  # noqa: E402
-    sub_fft_fxp, mul_fft_fxp, add_fft_fxp, adj_fft_fxp, ifft_fxp,
-    retag_poly_fxc, retag_poly_fxr,
+    sub_fft_fxp, mul_fft_to, add_fft_fxp, adj_fft_fxp, ifft_fxp,
 )
 from ffldl_fxp import keygen_fxp  # noqa: E402
 from ffsampling_fxp import ffsampling_fxp  # noqa: E402
@@ -76,32 +75,25 @@ from m_budgets import (  # noqa: E402
 def _gram_fft_fxp(B0_fft):
     """Gram G = B0·adj(B0^T) in FFT domain (pointwise, pure fxp).
 
-    The B0 FFT rows are retagged to their tight NTRUGen bounds BEFORE the
-    products: a, b = fft(g), fft(−f) → M_B_FG = 8 (γ_fg = 255, Check 1b);
-    c, d = fft(G), fft(−F) → M_B_FG_UP = 12 (γ_FG = 3500, Check 3). This is
-    not cosmetic: a product rounds to m_out = m_a + m_b, so multiplying at the
-    loose post-FFT tag (m = 21) would land each product at m = 42 (LSB 2^-21)
-    and truncate ~12 bits of the FFT's own precision (|fft(g)|² is good to
-    ~2^-33). Retagging first keeps the products at m = 16 / 20 (LSB ≤ 2^-43),
-    so the Gram is computed at full precision. Products are then widened to the
-    per-entry sum bounds M_G00 = 17 / M_G01 = 21 before the (overflow-prone)
-    additions — the same bounds `_build_fxp_tree_cache` expects.
+    `B0_fft` must come from `_build_B0_fft_fxp_cache` (rows at their tight γ
+    bounds M_B_FG / M_B_FG_UP): multiplying at the loose post-FFT m=21 would land
+    each product at m=42 and truncate ~12 bits, so tight inputs are load-bearing
+    here. Products are emitted straight at the per-entry sum bounds M_G00 / M_G01.
 
     Returns a `RootGram`: g00 = |a|²+|b|² (real), g10 = adj(G_01); G_11 is not
     computed (see `RootGram`).
     """
     [[a, b], [c, d]] = B0_fft
-    a, b = retag_poly_fxc(a, M_B_FG), retag_poly_fxc(b, M_B_FG)        # fft(g), fft(−f) — γ_fg
-    c, d = retag_poly_fxc(c, M_B_FG_UP), retag_poly_fxc(d, M_B_FG_UP)  # fft(G), fft(−F) — γ_FG
+    assert a[0].m == M_B_FG and c[0].m == M_B_FG_UP, \
+        f"_gram_fft_fxp: untight B0 a@{a[0].m} c@{c[0].m} (want {M_B_FG},{M_B_FG_UP})"
     a_adj, b_adj = adj_fft_fxp(a), adj_fft_fxp(b)
     c_adj, d_adj = adj_fft_fxp(c), adj_fft_fxp(d)
-    # G_00 = |a|²+|b|² < 2·γ_fg² < 2^17 (Hermitian-real — keep .re, PolyR);
-    # G_01 = a·c* + b·d* < 2·γ_fg·γ_FG < 2^21. Widen each product to the sum
-    # bound before adding (add needs equal m and the sum overflows the product m).
-    G00 = [z.re for z in add_fft_fxp(retag_poly_fxc(mul_fft_fxp(a, a_adj), M_G00),
-                                     retag_poly_fxc(mul_fft_fxp(b, b_adj), M_G00))]
-    G01 = add_fft_fxp(retag_poly_fxc(mul_fft_fxp(a, c_adj), M_G01),
-                      retag_poly_fxc(mul_fft_fxp(b, d_adj), M_G01))
+    # G_00 = |a|²+|b|² < 2^17 (real → keep .re); G_01 = a·c*+b·d* < 2^21.
+    # mul_fft_to emits each product at the sum bound (fits the add, single round).
+    G00 = [z.re for z in add_fft_fxp(mul_fft_to(a, a_adj, M_G00),
+                                     mul_fft_to(b, b_adj, M_G00))]
+    G01 = add_fft_fxp(mul_fft_to(a, c_adj, M_G01),
+                      mul_fft_to(b, d_adj, M_G01))
     return RootGram(g00=G00, g10=adj_fft_fxp(G01))
 
 
@@ -124,41 +116,27 @@ def _sigmin_fxp(sk):
 
 
 def _reconstruct_s_fxp(sk, t_fxp, z_fxc, m_sign):
-    """Compute s = (t − z)·B in FxC and ifft to integer polynomials.
+    """Compute s = (t − z)·B in FxC, then ifft to integer polynomials.
 
-    B0 rows are retagged to their tight NTRUGen bounds before the products:
-    a, b = fft(g), fft(−f) to m_B_fg = 8 (Check 1b, ‖fft(f,g)‖_∞ < γ_fg = 255);
-    c, d = fft(G), fft(−F) to m_B_FG = 12 (Check 3, ‖fft(F,G)‖_∞ ≤ γ_FG = 3500).
-    Both retags are value-preserving (exact left-shift). m_s_inter = 19 is the
-    common format for the `add` of the two products: it must hold each product
-    individually (max |diff·B| ≈ 2^17.76 over t−z, the small LTYZ residual),
-    not the smaller post-cancellation sum (≈ 2^13.5).
-
-    All three (m_B_fg, m_B_FG, m_s_inter) are sized for Falcon-512; other n
-    needs re-derivation (asserted below).
+    B0 rows arrive at their tight γ bounds from `_build_B0_fft_fxp_cache`.
+    m_s_inter = 19 is the common format for the `add` of the two products: it
+    holds each product (max |diff·B| ≈ 2^17.76 over the small LTYZ residual t−z),
+    not the smaller post-cancellation sum. Sized for Falcon-512 (asserted below).
     """
-    assert sk.n == 512, (
-        f"_reconstruct_s_fxp is hardcoded for Falcon-512 (sk.n={sk.n}); "
-        "m_B_{fg,FG} and m_s_inter need re-derivation for other parameter sets"
-    )
-    m_B_fg, m_B_FG, m_s_inter = M_B_FG, M_B_FG_UP, M_S_INTER  # see m_budgets.py
-    [a_raw, b_raw], [c_raw, d_raw] = _build_B0_fft_fxp_cache(sk)
-    a_fxc = retag_poly_fxc(a_raw, m_B_fg)   # fft(g)   — γ_fg
-    b_fxc = retag_poly_fxc(b_raw, m_B_fg)   # fft(−f)  — γ_fg
-    c_fxc = retag_poly_fxc(c_raw, m_B_FG)   # fft(G)   — γ_FG
-    d_fxc = retag_poly_fxc(d_raw, m_B_FG)   # fft(−F)  — γ_FG
+    assert sk.n == 512, f"_reconstruct_s_fxp: Falcon-512 only (sk.n={sk.n})"
+    m_s_inter = M_S_INTER  # see m_budgets.py
+    [a_fxc, b_fxc], [c_fxc, d_fxc] = _build_B0_fft_fxp_cache(sk)  # tight γ bounds (cache)
 
     diff0 = sub_fft_fxp(t_fxp[0], z_fxc[0])
     diff1 = sub_fft_fxp(t_fxp[1], z_fxc[1])
 
-    # s_j = diff0·B[0][j] + diff1·B[1][j]. Products land at different m
-    # (m_sign+8 vs m_sign+12), so retag both to the common m_s_inter before
-    # the add (value-preserving exact left-shift; add requires equal m).
-    def _sum2(p0, p1):
-        return add_fft_fxp(retag_poly_fxc(p0, m_s_inter),
-                           retag_poly_fxc(p1, m_s_inter))
-    s0_fxc = _sum2(mul_fft_fxp(diff0, a_fxc), mul_fft_fxp(diff1, c_fxc))
-    s1_fxc = _sum2(mul_fft_fxp(diff0, b_fxc), mul_fft_fxp(diff1, d_fxc))
+    # s_j = diff0·B[0][j] + diff1·B[1][j]. `mul_fft_to` emits each product
+    # straight at the common m_s_inter (single round), so the two summands
+    # share m for the add — no separate product→m_s_inter retag.
+    s0_fxc = add_fft_fxp(mul_fft_to(diff0, a_fxc, m_s_inter),
+                         mul_fft_to(diff1, c_fxc, m_s_inter))
+    s1_fxc = add_fft_fxp(mul_fft_to(diff0, b_fxc, m_s_inter),
+                         mul_fft_to(diff1, d_fxc, m_s_inter))
 
     # ifft then banker's-shift to nearest integer (pure int, no float).
     def _ifft_round(poly):
@@ -180,11 +158,11 @@ def _build_fxp_tree_cache(sk):
         return sk._fxp_tree
 
     # Gram in FFT domain (B0·adj(B0^T)): `_gram_fft_fxp` already emits g00/g10 at
-    # the tight per-entry bounds M_G00/M_G01 (NTRUGen Checks 1b/3), so these
-    # retags are defensive no-ops (kept to pin the contract keygen relies on).
+    # the tight per-entry bounds M_G00/M_G01 (NTRUGen Checks 1b/3) that keygen_fxp
+    # relies on, so we assert the contract instead of retagging.
     gram = _gram_fft_fxp(_build_B0_fft_fxp_cache(sk))
-    G_fxp = RootGram(g00=retag_poly_fxr(gram.g00, M_G00),
-                     g10=retag_poly_fxc(gram.g10, M_G01))
+    assert gram.g00[0].m == M_G00 and gram.g10[0].m == M_G01
+    G_fxp = gram
 
     tree = keygen_fxp(G_fxp, q=FALCON_Q, inv_sigma=_inv_sigma_fxp(sk),
                       sigmin=_sigmin_fxp(sk))
@@ -223,10 +201,7 @@ def sample_preimage(sk: SecretKey, point: list[int], use_tweak: int = USE_TWEAK_
         # The whole fxp pipeline is currently tuned for Falcon-512 (m_D=18,
         # M_L10_ROOT=5, m_B_{fg,FG} in _reconstruct_s_fxp); n=1024 needs a
         # numerical re-validation of every per-level precision bound.
-        assert sk.n == 512, (
-            f"fxp ffsampling path is hardcoded for Falcon-512 (sk.n={sk.n}); "
-            "see README.md and re-derive m_D / M_L10_ROOT / m_sign for other n"
-        )
+        assert sk.n == 512, f"fxp ffsampling: Falcon-512 only (sk.n={sk.n})"
         # m_sign is the FxC `m` for t throughout ffsampling — optimal value
         # is fully determined by use_tweak:
         #   STD : `point` ∈ [0, q-1] ⇒ ‖t̂_root‖_∞ < n·γ_FG = 512·3500 ≈ 2^20.77

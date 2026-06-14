@@ -250,7 +250,7 @@ def build_t_at_all_precisions(sk, c, p_fxp_list, m_sign):
     # |f_i|, |F_i| ≤ γ_FG = 3500 < 2^11.78 < 2^13. Conservative m=13 keeps
     # one bit of headroom for the FxR invariant.
     M_B0_COEF = 13
-    from fxtypes import retag_value_fxc  # local: bench-only dep
+    from fxtypes import retag_fxc  # local: bench-only dep
     t_fxps = {}
     for p in p_fxp_list:
         c_fxc = fft_fxp([FxR.from_int(int(ci), m=M_POINT_COEF, p=p) for ci in c])
@@ -264,9 +264,9 @@ def build_t_at_all_precisions(sk, c, p_fxp_list, m_sign):
             fft_fxp([FxR.from_int(int(f_i), m=M_B0_COEF, p=p) for f_i in sk.f]), M_B_FG)
         inv_q = _INVQ[p]   # p-precise generated 1/q (m=-13), as in production
                            # target_construction._div_by_q_fxc (NOT a float64 1/q).
-        t0 = [retag_value_fxc(-(ci * Fi) * inv_q, m_sign)
+        t0 = [retag_fxc(-(ci * Fi) * inv_q, m_sign)
               for ci, Fi in zip(c_fxc, F_fxc)]
-        t1 = [retag_value_fxc((ci * fi) * inv_q, m_sign)
+        t1 = [retag_fxc((ci * fi) * inv_q, m_sign)
               for ci, fi in zip(c_fxc, f_fxc)]
         t_fxps[p] = [t0, t1]
     return t_fp, t_mp, t_fxps

@@ -1,42 +1,28 @@
 """
-Fixed-point port of Falcon's samplerz.
-
-Mirrors falcon_ref/samplerz.py exactly in structure, but takes `mu` as
-FxR and does the "float arithmetic on mu/r/x" in FxR. Already-integer
-parts of the reference (basesampler RCDT, approxexp's 13-coef poly,
-berexp's byte-wise compare) stay unchanged.
-
-samplerz only depends on r = mu − floor(mu) ∈ [0, 1), so mu can have
-any magnitude — we split into (s = floor(mu), r) and use r throughout.
-
-At p=63 the 63-bit mantissa exceeds float64's 53 bits; with shared
+Fixed-point port of Falcon's samplerz: takes `mu` as FxR and does the float
+arithmetic on mu/r/x in FxR. The already-integer parts (basesampler RCDT,
+approxexp's 13-coef poly, berexp's byte-wise compare) are unchanged. With shared
 randomness, outputs are byte-identical to the float64 reference.
 """
 
 from os import urandom
-from typing import Callable
+from typing import Callable, Literal
 
 from beartype import beartype
 
-from fxtypes import FxR, retag_value_fxr as _retag_m
+from fxtypes import FxR, retag_fxr
 
 
 # Constants (Falcon spec / reference samplerz).
 _P = 63
 
-# Default mode shared with falcon_ref/samplerz.py: "floor" reproduces the
-# Falcon spec sampler bit-for-bit; "round" implements LTYZ NewSamplerZ
-# (Algorithm 4 of paper 2024-1709), shifting the round-off-sensitive
-# locus from integer centers to half-integer ones (which don't occur
-# in Falcon under the paper's keygen restriction ‖(g, −f)‖² odd).
+# "floor" reproduces the Falcon spec sampler bit-for-bit; "round" implements LTYZ
+# NewSamplerZ (paper 2024-1709), moving the round-off-sensitive locus to
+# half-integers (absent in Falcon under the ‖(g, −f)‖² odd keygen restriction).
 SAMPLERZ_MODE = "floor"
 
-# Reverse CDF table (72-bit precision). Two flavors: floor (Falcon spec
-# half-Gaussian D_{Z+, σmax, 0}, no halving) and round (LTYZ
-# NewBaseSampler, half-Gaussian D_{Z+, σmax, 1/2} with D(0) halved).
-# Both are produced by `scripts/generate_rcdt.py` per Howe-Prest-Ricosset-
-# Rossi 2019-1411 §5.2 rounding (truncate + mass-conserve on the largest
-# entry).
+# Reverse-CDF tables (72-bit). floor: half-Gaussian D_{Z+, σmax, 0}; round: LTYZ
+# NewBaseSampler D_{Z+, σmax, 1/2} (D(0) halved). Both from scripts/generate_rcdt.py.
 RCDT_PREC = 72
 RCDT_FLOOR = [
     3024686241123004913666,
@@ -98,9 +84,8 @@ _C = [
     0x8000000000000000,
 ]
 
-# Hardcoded FxR constants — x = round(value · 2^{p-m}). Computed once
-# offline (see scripts/generate_constants_fxp.sage if you ever need to
-# refresh) so that this module loads without a single float operation.
+# Hardcoded FxR constants (x = round(value·2^{p-m})), so this module loads with no
+# float op. Refresh via scripts/generate_constants_fxp.sage.
 LN2_FXR = FxR(x=6393154322601832448, m=0, p=_P)             # 0.69314718056
 ILN2_FXR = FxR(x=6653256548926941184, m=1, p=_P)            # 1.44269504089
 INV_2SIGMA2_FXR = FxR(x=1391484473135841792, m=0, p=_P)     # 1/(2·1.8205²) = 0.150865...
@@ -157,7 +142,7 @@ def _scale_to_p(a: FxR) -> int:
 
 @beartype
 def basesampler(randombytes: Callable[[int], bytes] = urandom,
-                mode: str | None = None) -> int:
+                mode: Literal["floor", "round"] | None = None) -> int:
     """Sample z0 ∈ {0, ..., 18} from a distribution close to a half-Gaussian
     with parameter sigma_max = 1.8205 (Falcon spec). ``mode`` selects the
     table: "floor" → RCDT_FLOOR (μ=0), "round" → RCDT_ROUND (μ=1/2 with
@@ -207,27 +192,20 @@ def berexp_fxp(x: FxR, ccs: FxR,
     clamped at 0 to absorb tiny negative x from fp drift upstream.
     """
     assert x.p == _P and ccs.p == _P
-    # x.value ≥ 0 is a mathematical precondition (the integer-part extraction
-    # below uses truncation toward zero, valid only for x ≥ 0). If this fires,
-    # ULP drift on `(z-r)²·dss − sigma_correction·INV_2SIGMA2` at the call site
-    # pushed x_fxr below 0, where floor-vs-trunc semantics would diverge.
-    assert x.x >= 0, (
-        f"berexp_fxp: x.value < 0 (x.x={x.x}, m={x.m}, p={x.p}, "
-        f"≈ {x.to_float():.3e}); ULP drift on (z-r)²·dss − z0²·INV_2SIGMA2"
-    )
+    # x ≥ 0 is a precondition: the integer-part extraction below truncates toward
+    # zero. A negative x means upstream ULP drift pushed x_fxr below 0.
+    assert x.x >= 0, f"berexp_fxp: x<0 (x.x={x.x}, m={x.m} ≈ {x.to_float():.3e}); upstream ULP drift"
     s_int = _floor_value(x * ILN2_FXR)
 
-    # r = x − s·ln2. s·LN2 lives at m = s.bit_length(); align to x.m.
+    # r = x − s·ln2.
     if s_int == 0:
         r_fxr = x
     else:
-        m_s = max(1, s_int.bit_length())
-        s_ln2 = FxR.from_int(s_int, m=m_s, p=_P) * LN2_FXR
-        m_common = max(x.m, s_ln2.m)
-        r_fxr = _retag_m(x, m_common) - _retag_m(s_ln2, m_common)
+        s_ln2 = FxR.from_int(s_int, m=x.m, p=_P) * LN2_FXR
+        r_fxr = x - s_ln2
     # r ∈ [0, ln2) ⊂ [0, 1) → m=0 tight (mandatory for approxexp_fxp).
     # Banker-shift drops ≤ ~6 LSBs (residual ~2^-57, ≫ samplerz sensitivity).
-    r_fxr = _retag_m(r_fxr, 0)
+    r_fxr = retag_fxr(r_fxr, 0)
 
     s_int = max(0, min(s_int, 63))
     z = (approxexp_fxp(r_fxr, ccs) - 1) >> s_int
@@ -249,29 +227,27 @@ def berexp_fxp(x: FxR, ccs: FxR,
 @beartype
 def samplerz_fxp(mu: FxR, dss: FxR, ccs: FxR,
                  randombytes: Callable[[int], bytes] = urandom,
-                 mode: str | None = None) -> int:
-    """Sample z from D_{Z, sigma, mu}. Takes the precomputed leaf constants
-    dss = 1/(2σ_i²) ≤ 0.305 (m=0) and ccs = σ_min/σ_i ∈ (0, 1] (m=0), built
-    once per leaf at normalize time (see `_normalize_leaf_poly`), so the
-    sampler itself does no division, square, or σ-related arithmetic.
+                 mode: Literal["floor", "round"] | None = None) -> int:
+    """Sample z from D_{Z, σ, mu}. Takes the precomputed leaf constants dss =
+    1/(2σ_i²) and ccs = σ_min/σ_i (both m=0, built once per leaf in
+    `_normalize_leaf_poly`), so the sampler does no division, square, or σ
+    arithmetic. ``mode`` ∈ {"floor" (Falcon spec), "round" (LTYZ)}; None → default.
 
-    Mirrors falcon_ref/samplerz.py in structure. ``mode`` selects between
-    the Falcon spec ("floor") and LTYZ NewSamplerZ ("round"); falls back
-    to module-level SAMPLERZ_MODE when None.
-
-    Constant-time in the base sampler and polynomial eval; data-dependent
-    in the Bernoulli rejection (standard samplerz semantics).
+    Constant-time (control flow) in the base sampler and polynomial eval;
+    data-dependent in the Bernoulli rejection (standard samplerz).
     """
     assert mu.p == _P and dss.p == _P and ccs.p == _P, "samplerz_fxp requires p=63"
     if mode is None:
         mode = SAMPLERZ_MODE
 
-    # mu = s_int + r. floor: r ∈ [0, 1) at m=0. round: r ∈ [−1/2, 1/2) at m=0.
+    # mu = s_int + r, with |r| < 1. Retag r once to m=5 (the format of `diff`
+    # below: |z_int − r| ≤ 18.5 < 2^5), an exact left-shift since r_raw is at
+    # mu.m ≥ 5 — so r is exact at m=5 and the loop needs no per-iteration retag.
     if mode == "floor":
         s_int, r_raw = _floor_and_frac(mu)
     else:
         s_int, r_raw = _round_and_frac(mu)
-    r_fxr = _retag_m(r_raw, 0)
+    r_fxr = retag_fxr(r_raw, 5)
 
     while True:
         z0 = basesampler(randombytes, mode=mode)             # ∈ [0, 18]
@@ -289,18 +265,14 @@ def samplerz_fxp(mu: FxR, dss: FxR, ccs: FxR,
             sigma_correction_int = z0 * z0 - z0              # ≤ 18·17 = 306
 
         # x = (z_int − r)²·dss − sigma_correction·INV_2SIGMA2. Bounds:
-        #   |z_int − r| ≤ 18.5 → m=6; squared at m=12; ·dss keeps m=12
+        #   |z_int − r| ≤ 18.5 < 2^5 → m=5; squared at m=10; ·dss keeps m=10
         #   sigma_correction ≤ 324 → m=9; ·INV_2SIGMA2 keeps m=9
-        diff = FxR.from_int(z_int, m=6, p=_P) - _retag_m(r_fxr, 6)
-        term1 = (diff * diff) * dss
-        term2 = FxR.from_int(sigma_correction_int, m=9, p=_P) * INV_2SIGMA2_FXR
-        m_common = max(term1.m, term2.m)
-        x_fxr = _retag_m(term1, m_common) - _retag_m(term2, m_common)
+        diff = FxR.from_int(z_int, m=5, p=_P) - r_fxr
+        term1 = (diff * diff) * dss                       # always m=10
+        term2 = FxR.from_int(sigma_correction_int, m=9, p=_P) * INV_2SIGMA2_FXR  # m=9
+        x_fxr = term1 - retag_fxr(term2, term1.m)          # widen term2 9→10; term1 already there
 
-        # x.value ≥ 0 by construction here: term1.x ≥ 0 (banker's-shifts on
-        # positive integer products); term2.x ≥ 0 (sigma_correction_int ≥ 0).
-        # For z0 = 0, term2 = 0 exactly. For z0 ≥ 1, math gives
+        # x ≥ 0 by construction: term1, term2 ≥ 0, and for z0 ≥ 1 math gives
         # x ≥ z0²·(dss − INV_2SIGMA2) ≥ 2^-6.4 ≫ ULP under Falcon's σ filter.
-        # berexp_fxp asserts x.x ≥ 0 explicitly.
         if berexp_fxp(x_fxr, ccs, randombytes):
             return z_int + s_int

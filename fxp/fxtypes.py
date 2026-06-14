@@ -61,9 +61,7 @@ class FxR:
         assert self.p > 0, f"p must be positive, got p={self.p}"
         # m > p would give sub-unit resolution and break small-integer mul.
         assert self.m <= self.p, f"m must not exceed p, got m={self.m}, p={self.p}"
-        assert abs(self.x) < (
-            1 << self.p
-        ), f"|x|={abs(self.x)} violates |x| < 2^{self.p}"
+        assert abs(self.x) < (1 << self.p), f"|x|={abs(self.x)} ≥ 2^{self.p}"
 
     # ---- constructors -----------------------------------------------
 
@@ -82,9 +80,7 @@ class FxR:
     def to_int(self) -> int:
         """Return the integer value. Asserts the value is exactly an integer."""
         q, r = divmod(self.x, 1 << (self.p - self.m))
-        assert (
-            r == 0
-        ), f"FxR value is not an integer: x={self.x}, m={self.m}, p={self.p}"
+        assert r == 0, f"FxR not integer: x={self.x}, m={self.m}, p={self.p}"
         return q
 
     def to_float(self) -> float:
@@ -99,10 +95,7 @@ class FxR:
 
     def __add__(self, other: FxR) -> FxR:
         """Exact sum in the common (m, p). Overflow raises via __post_init__."""
-        assert (self.m, self.p) == (other.m, other.p), (
-            f"FxR + FxR: inputs must share (m, p), got "
-            f"({self.m},{self.p}) and ({other.m},{other.p})"
-        )
+        assert (self.m, self.p) == (other.m, other.p), f"FxR +: (m,p) {(self.m, self.p)} != {(other.m, other.p)}"
         return FxR(x=self.x + other.x, m=self.m, p=self.p)
 
     def __sub__(self, other: FxR) -> FxR:
@@ -116,9 +109,7 @@ class FxR:
         preserved via a round-to-nearest-even shift of p bits on the
         exact integer product. Rounding error at most 2^{m_a+m_b-p-1}.
         """
-        assert (
-            self.p == other.p
-        ), f"FxR * FxR: operands must share p, got p={self.p} and p={other.p}"
+        assert self.p == other.p, f"FxR *: p {self.p} != {other.p}"
         x = _bankers_shift(self.x * other.x, self.p)
         return FxR(x=x, m=self.m + other.m, p=self.p)
 
@@ -149,10 +140,7 @@ class FxC:
     im: FxR
 
     def __post_init__(self) -> None:
-        assert (self.re.m, self.re.p) == (self.im.m, self.im.p), (
-            f"FxC components disagree on (m,p): "
-            f"re=({self.re.m},{self.re.p}) vs im=({self.im.m},{self.im.p})"
-        )
+        assert (self.re.m, self.re.p) == (self.im.m, self.im.p), f"FxC re/im (m,p) {(self.re.m, self.re.p)} != {(self.im.m, self.im.p)}"
 
     # ---- accessors --------------------------------------------------
 
@@ -215,15 +203,39 @@ class FxC:
         component exactly to 2^p and trip the __post_init__ assert (loud,
         not silent). Pipeline values keep multi-bit modulus margins.
         """
-        assert (
-            self.p == other.p
-        ), f"FxC * FxC: operands must share p, got p={self.p} and p={other.p}"
+        assert self.p == other.p, f"FxC *: p {self.p} != {other.p}"
         p = self.p
         x_a, x_b = self.re.x, self.im.x
         x_c, x_d = other.re.x, other.im.x
         m_out = self.m + other.m
         x_re = _bankers_shift(x_a * x_c - x_b * x_d, p)
         x_im = _bankers_shift(x_a * x_d + x_b * x_c, p)
+        return FxC(re=FxR(x=x_re, m=m_out, p=p), im=FxR(x=x_im, m=m_out, p=p))
+
+    def mul_to(self, other: FxC, m_out: int) -> FxC:
+        """Complex multiply emitting directly at the caller-chosen budget m_out,
+        with a SINGLE round.
+
+        Same value as `retag_fxc(self * other, m_out)` but the exact
+        integer product is shifted straight to m_out (one banker's shift),
+        instead of rounding at p to the natural m_self+m_other and then
+        re-rounding to m_out. Dropping the intermediate round makes it slightly
+        more accurate — so it is NOT bit-identical to the two-step form. The
+        |x| < 2^p invariant is checked by FxR's __post_init__ (loud on overflow).
+        """
+        assert self.p == other.p, f"FxC.mul_to: p {self.p} != {other.p}"
+        p = self.p
+        x_a, x_b = self.re.x, self.im.x
+        x_c, x_d = other.re.x, other.im.x
+        e_re = x_a * x_c - x_b * x_d
+        e_im = x_a * x_d + x_b * x_c
+        s = p + m_out - self.m - other.m          # total shift to land at m_out
+        if s > 0:
+            x_re, x_im = _bankers_shift(e_re, s), _bankers_shift(e_im, s)
+        elif s == 0:
+            x_re, x_im = e_re, e_im
+        else:
+            x_re, x_im = e_re << -s, e_im << -s
         return FxC(re=FxR(x=x_re, m=m_out, p=p), im=FxR(x=x_im, m=m_out, p=p))
 
     # ---- debug ------------------------------------------------------
@@ -267,7 +279,7 @@ FFLDLTree = list               # [L10, sub_L, sub_R] (internal) or [L10, D00, D1
 
 
 # --------------------------------------------------------------------- #
-#   retag_value_fxr / retag_value_fxc (a/z, m_new)
+#   retag_fxr / retag_fxc (a/z, m_new)
 #     Value-preserving: x is shifted to keep `value` invariant.
 #       m_new > a.m: banker's-shift right by (m_new − a.m) [precision loss].
 #       m_new < a.m: left-shift by (a.m − m_new). Caller must ensure no
@@ -277,7 +289,7 @@ FFLDLTree = list               # [L10, sub_L, sub_R] (internal) or [L10, D00, D1
 # --------------------------------------------------------------------- #
 
 
-def retag_value_fxr(a: FxR, m_new: int) -> FxR:
+def retag_fxr(a: FxR, m_new: int) -> FxR:
     """Value-preserving retag. x is shifted to keep value(a) invariant."""
     if m_new == a.m:
         return a
@@ -287,6 +299,6 @@ def retag_value_fxr(a: FxR, m_new: int) -> FxR:
         return FxR(x=a.x << (a.m - m_new), m=m_new, p=a.p)
 
 
-def retag_value_fxc(z: FxC, m_new: int) -> FxC:
+def retag_fxc(z: FxC, m_new: int) -> FxC:
     """Value-preserving retag on FxC, applied componentwise."""
-    return FxC(re=retag_value_fxr(z.re, m_new), im=retag_value_fxr(z.im, m_new))
+    return FxC(re=retag_fxr(z.re, m_new), im=retag_fxr(z.im, m_new))
