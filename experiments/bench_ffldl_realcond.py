@@ -44,7 +44,7 @@ from fft import neg  # noqa: E402
 from fxtypes import FxR, RootGram  # noqa: E402
 from fft_fxp import fft_fxp, retag_poly_fxr, retag_poly_fxc  # noqa: E402
 from ffldl_fxp import ffldl_fft_fxp_ntru_root  # noqa: E402
-from m_budgets import M_G00, M_G01, M_B0_COEF  # noqa: E402
+from m_budgets import M_G00, M_G01, M_B0_COEF, M_B_FG, M_B_FG_UP  # noqa: E402
 from sign_tweak import _gram_fft_fxp  # noqa: E402
 
 Q = 12289
@@ -57,10 +57,14 @@ def _abs_errs(got_mp, ref_mp):
 
 
 def _b0_fft_at_p(sk, p):
-    """fxp FFT of B0 = [[g,−f],[G,−F]] at precision p (no cache, p-parametric)."""
+    """fxp FFT of B0 = [[g,−f],[G,−F]] at precision p, retagged to the tight γ
+    bounds (M_B_FG / M_B_FG_UP) like the deployed `_build_B0_fft_fxp_cache` —
+    `_gram_fft_fxp` asserts that contract (no cache here, so p-parametric)."""
     rows = [[sk.g, neg(sk.f)], [sk.G, neg(sk.F)]]
-    return [[fft_fxp([FxR.from_int(c, m=M_B0_COEF, p=p) for c in poly])
-             for poly in row] for row in rows]
+    [a, b], [c, d] = [[fft_fxp([FxR.from_int(co, m=M_B0_COEF, p=p) for co in poly])
+                       for poly in row] for row in rows]
+    return [[retag_poly_fxc(a, M_B_FG), retag_poly_fxc(b, M_B_FG)],
+            [retag_poly_fxc(c, M_B_FG_UP), retag_poly_fxc(d, M_B_FG_UP)]]
 
 
 def _prod_tree(sk, p):

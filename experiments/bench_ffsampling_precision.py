@@ -150,13 +150,14 @@ def build_fxp_tree_at_p_selfconsistent(sk, p, m_sign):
     # Integer -> FxR at (m_B, p), exact embedding.
     B_fxr = [[[FxR.from_int(int(c), m=m_B, p=p) for c in B[i][j]] for j in range(2)]
              for i in range(2)]
-    # fft_fxp per block.
+    # fft_fxp per block, then tighten each B0 row to its NTRUGen γ bound —
+    # exactly what `_build_B0_fft_fxp_cache` bakes for the deployed keygen
+    # (fft(g), fft(−f) → M_B_FG; fft(G), fft(−F) → M_B_FG_UP; an exact
+    # left-shift). `_gram_fft_fxp` asserts this contract — since the d84d761
+    # refactor it no longer retags internally.
     B_fft = [[fft_fxp(B_fxr[i][j]) for j in range(2)] for i in range(2)]
-
-    # Production Gram: `_gram_fft_fxp` retags the B0 rows to their tight γ
-    # bounds (M_B_FG / M_B_FG_UP) BEFORE the products, so this matches the
-    # DEPLOYED keygen exactly rather than a stale inline replica. B_fft is the
-    # [[fft(g), fft(−f)], [fft(G), fft(−F)]] structure it expects.
+    B_fft = [[retag_poly_fxc(B_fft[0][0], M_B_FG),    retag_poly_fxc(B_fft[0][1], M_B_FG)],
+             [retag_poly_fxc(B_fft[1][0], M_B_FG_UP), retag_poly_fxc(B_fft[1][1], M_B_FG_UP)]]
     G_fxp = _gram_fft_fxp(B_fft)
 
     inv_sigma_fxr = _INVSIG[p][sk.n]   # 1/σ (INV_SIGMA), m=-7, p-precise (not float64)
