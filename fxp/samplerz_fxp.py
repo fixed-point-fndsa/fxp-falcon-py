@@ -261,11 +261,11 @@ def samplerz_fxp(mu: FxR, dss: FxR, ccs: FxR,
 
         # x = (z_int − r)²·dss − sigma_correction·INV_2SIGMA2. Bounds:
         #   |z_int − r| ≤ 18.5 < 2^5 → m=5; squared at m=10; ·dss keeps m=10
-        #   sigma_correction ≤ 324 → m=9; ·INV_2SIGMA2 keeps m=9
+        #   sigma_correction ≤ 324 < 2^10; built at m=10 to match term1 directly
         diff = FxR.from_int(z_int, m=5, p=_P) - r_fxr
         term1 = (diff * diff) * dss                       # always m=10
-        term2 = FxR.from_int(sigma_correction_int, m=9, p=_P) * INV_2SIGMA2_FXR  # m=9
-        x_fxr = term1 - retag_fxr(term2, term1.m)          # widen term2 9→10; term1 already there
+        term2 = FxR.from_int(sigma_correction_int, m=10, p=_P) * INV_2SIGMA2_FXR  # m=10, aligned to term1
+        x_fxr = term1 - term2
 
         # x ≥ 0 by construction: term1, term2 ≥ 0, and for z0 ≥ 1 math gives
         # x ≥ z0²·(dss − INV_2SIGMA2) ≥ 2^-6.4 ≫ ULP under Falcon's σ filter.

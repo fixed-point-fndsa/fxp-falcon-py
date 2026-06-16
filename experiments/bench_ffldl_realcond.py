@@ -3,9 +3,9 @@ Real-conditions ffLDL precision for the camera-ready: how the ABSOLUTE
 precision of `ffldl_fft_fxp` evolves as we DESCEND the ffLDL tree, on real
 Falcon-512 keys through the deployed code path.
 
-Unlike `bench_ffldl_precision.py` (kernel characterisation: idealised mpmath
-Gram, swept over synthetic root dimensions n=4..128), this runs the actual
-production chain on real keys —
+Unlike a kernel characterisation on an idealised (tight-m, mpmath-built) Gram
+swept over synthetic root dimensions, this runs the actual production chain on
+real keys —
 
     real key ─▶ B0 ─fxp FFT─▶ _gram_fft_fxp ─▶ ffldl_fft_fxp_ntru_root
 
@@ -34,9 +34,10 @@ import _path_setup  # noqa: F401, E402
 
 from _outputs import save_fig, write_csv  # noqa: E402
 
-from bench_ffldl_precision import (  # noqa: E402
+from _precision_ref import (  # noqa: E402
     _mp_ffldl_fft, _gram_from_B_mp,
     _fxc_poly_to_mp, _float_poly_to_mp, _run_float,
+    _abs_errs, _mse, _log2,
 )
 
 from falcon import SecretKey  # noqa: E402
@@ -50,10 +51,7 @@ from sign_tweak import _gram_fft_fxp  # noqa: E402
 Q = 12289
 mpmath.mp.prec = 256
 
-
-def _abs_errs(got_mp, ref_mp):
-    """All per-coefficient ABSOLUTE errors |got − ref| (complex modulus)."""
-    return [float(abs(g - r)) for g, r in zip(got_mp, ref_mp)]
+# `_abs_errs` / `_mse` / `_log2` are shared from `_precision_ref`.
 
 
 def _b0_fft_at_p(sk, p):
@@ -101,14 +99,6 @@ def measure_key(sk):
         for n_level, errs in acc.items():
             per.setdefault(n_level, {}).setdefault(mode, []).extend(errs)
     return per
-
-
-def _mse(errs):
-    return sum(e * e for e in errs) / len(errs) if errs else float("nan")
-
-
-def _log2(x):
-    return float("nan") if (x != x or x <= 0) else math.log2(x)
 
 
 def bench(n_keys):

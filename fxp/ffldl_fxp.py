@@ -124,7 +124,8 @@ def keygen_fxp(
     """ffLDL* + normalize_tree on the NTRU Gram, yielding the signing tree.
 
     The caller builds the Gram `G = B·B*` in FFT domain as a 2x2 matrix of
-    FxC polys with tight per-block m (see `bench_ffldl_precision._run_fxp`).
+    FxC polys (in production via `sign_tweak._gram_fft_fxp`, which emits g00/g10
+    at the fixed budgets M_G00 / M_G01).
     The m budgets are fixed Falcon-512 constants (M_L10_ROOT=5, M_L10_INNER=0,
     M_D=18 — see `m_budgets` and `ldl_fft_fxp_ntru_root`); the caller's Gram
     must come from a key passing the full NTRUGen filter. `inv_sigma` (= 1/σ,

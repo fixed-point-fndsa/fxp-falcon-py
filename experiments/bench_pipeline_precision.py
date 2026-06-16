@@ -24,6 +24,10 @@ g10 ≈ 2^20 vs σ_i ≈ 1, so compare WITHIN a stage / vs float64, not across.
 NOT covered (by design / by assumption): the fxp sampler's *decision* fidelity
 — the main theorem assumes `samplerz` is an ideal sampler, so only the
 arithmetic feeding it is graded here; z is taken as produced.
+
+This script is both the benchmark (CSV + figure) AND a hard gate: `gate()`
+asserts a per-stage fxp-63 RMSE ceiling and `sig_mism == 0`, so running it
+exits non-zero on a deployed-path precision regression.
 """
 
 import math
@@ -38,12 +42,13 @@ import _path_setup  # noqa: F401, E402  (sets up sys.path)
 
 from _outputs import save_fig, write_csv  # noqa: E402
 
-from bench_ffldl_precision import (  # noqa: E402
+from _precision_ref import (  # noqa: E402
     _mp_fft, _mp_split_fft, _mp_ffldl_fft, _gram_from_B_mp,
     _fxr_to_mp, _fxc_poly_to_mp, _float_poly_to_mp, _run_float,
+    _abs_errs, _mse, _log2,
 )
 
-from falcon import SecretKey  # noqa: E402
+from falcon import SecretKey  # noqa: E402  (its ntru_gen applies the full NTRUGen filter)
 from fft import neg, fft as fft_float  # noqa: E402
 from ffsampling import gram as gram_float  # noqa: E402
 from fxtypes import RootGram  # noqa: E402
@@ -81,11 +86,8 @@ def _mp_ifft(f_fft):
 
 # --------------------------------------------------------------------- #
 # Absolute per-coefficient errors (lists; aggregated to MSE by the driver).
+# `_abs_errs` / `_mse` / `_log2` are shared from `_precision_ref`.
 # --------------------------------------------------------------------- #
-
-
-def _abs_errs(got_mp, ref_mp):
-    return [float(abs(g - r)) for g, r in zip(got_mp, ref_mp)]
 
 
 def _tree_abs_errs(ref_mp, got, conv, out):
@@ -172,10 +174,9 @@ def measure_key(sk, key_idx, m_sign=21):
     z0f, z1f = _mp_fft(z0), _mp_fft(z1)
     diff0 = [t0_ref[i] - z0f[i] for i in range(n)]
     diff1 = [t1_ref[i] - z1f[i] for i in range(n)]
-    a_mp, b_mp2 = _mp_fft(sk.g), _mp_fft(neg(sk.f))
-    c_mp2, d_mp2 = _mp_fft(sk.G), _mp_fft(neg(sk.F))
+    a_mp, c_mp2 = _mp_fft(sk.g), _mp_fft(sk.G)   # b_mp/d_mp (= FFT of −f/−F) reused from Stage 4
     s0_mp = [v.real for v in _mp_ifft([diff0[i] * a_mp[i] + diff1[i] * c_mp2[i] for i in range(n)])]
-    s1_mp = [v.real for v in _mp_ifft([diff0[i] * b_mp2[i] + diff1[i] * d_mp2[i] for i in range(n)])]
+    s1_mp = [v.real for v in _mp_ifft([diff0[i] * b_mp[i] + diff1[i] * d_mp[i] for i in range(n)])]
     mism = sum(int(s0[i] != int(mpmath.nint(s0_mp[i]))) for i in range(n)) + \
         sum(int(s1[i] != int(mpmath.nint(s1_mp[i]))) for i in range(n))
     sig_abs = max(max(abs(float(s0[i]) - float(s0_mp[i])) for i in range(n)),
@@ -189,19 +190,11 @@ def measure_key(sk, key_idx, m_sign=21):
 # --------------------------------------------------------------------- #
 
 
-def _mse(errs):
-    return sum(e * e for e in errs) / len(errs) if errs else float("nan")
-
-
-def _log2(x):
-    return float("nan") if (x != x or x <= 0) else math.log2(x)
-
-
 def bench(n_keys):
     agg = {s: {"fp": [], "fxp": []} for s in STAGES}
     sig_abs, sig_mism = [], 0
     for k in range(n_keys):
-        sk = SecretKey(512)
+        sk = SecretKey(512)   # ntru_gen applies the full NTRUGen filter (γ_fg/hybrid/gs/FG/root)
         r = measure_key(sk, k)
         for s in STAGES:
             agg[s]["fp"].extend(r[s]["fp"])
@@ -258,6 +251,31 @@ def plot(agg):
     return fig
 
 
+# fxp-63 RMSE ceilings per stage — the pass/fail contract (the *verification*,
+# vs the measurement above). Observed RMSE is ~2^-33 / -39 / -53 / -38; each
+# ceiling is observed + ~3 bits, so a gross precision regression (a wrong
+# budget, a broken reciprocal, an overflow → many bits lost) trips it, while
+# normal key-to-key variation of the aggregate MSE stays well under.
+_RMSE_CEIL = {
+    "gram":             2 ** -30,
+    "ffldl(L10+D_ii)":  2 ** -36,
+    "sigma_i(dss,ccs)": 2 ** -50,
+    "target_t":         2 ** -35,
+}
+
+
+def gate(agg, sig_mism, n_keys):
+    """Hard pass/fail on the deployed-path precision. Raises AssertionError on
+    a per-stage RMSE regression or any signature integer mismatch."""
+    assert sig_mism == 0, \
+        f"signature reconstruct: {sig_mism} integer mismatch(es) vs exact (must be 0)"
+    for s in STAGES:
+        rmse = math.sqrt(_mse(agg[s]["fxp"]))
+        assert rmse <= _RMSE_CEIL[s], \
+            f"{s}: fxp-63 RMSE 2^{_log2(rmse):.1f} exceeds ceiling 2^{_log2(_RMSE_CEIL[s]):.0f}"
+    print(f"\n  GATE PASS: {len(STAGES)} stages within RMSE ceiling, sig_mism=0 ({n_keys} keys).")
+
+
 def main(n_keys=10):
     print(f"Running production-path ABSOLUTE precision over {n_keys} real Falcon-512 keys...")
     agg, sig_abs, sig_mism = bench(n_keys)
@@ -266,6 +284,7 @@ def main(n_keys=10):
               headers=["stage", "float64_mse", "float64_rmse", "fxp63_mse", "fxp63_rmse"],
               rows=rows)
     save_fig(plot(agg), "pipeline_precision", HERE)
+    gate(agg, sig_mism, n_keys)   # artifacts written first; then the hard pass/fail
 
 
 if __name__ == "__main__":

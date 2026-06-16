@@ -94,7 +94,7 @@ def _filtered_sk(n):
         return sk
 
 # mpmath pipeline (reuse from ffldl bench).
-from bench_ffldl_precision import (  # noqa: E402
+from _precision_ref import (  # noqa: E402
     _mp_fft, _mp_split_fft, _mp_merge_fft, _mp_adj,
     _mp_ffldl_fft as _mp_ffldl_inner,
 )

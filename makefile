@@ -29,8 +29,8 @@ fig-fft:   ## figure - FFT precision (float64 vs FxP-63/127 vs mpmath)
 	$(PY_EXP) experiments/bench_fft_precision.py
 fig-div:   ## figure - division precision
 	$(PY_EXP) experiments/bench_div_precision.py
-fig-ffldl:   ## figure - ffLDL precision
-	$(PY_EXP) experiments/bench_ffldl_precision.py
+fig-ffldl:   ## figure - ffLDL precision (real-conditions deployed path; the paper figure)
+	$(PY_EXP) experiments/bench_ffldl_realcond.py
 fig-ffsampling:   ## figure - ffsampling precision
 	$(PY_EXP) experiments/bench_ffsampling_precision.py
 

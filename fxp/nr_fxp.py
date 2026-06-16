@@ -107,7 +107,7 @@ def nr_reciprocal(b: FxR) -> FxR:
         y = FxR(x=-y.x, m=m_y, p=p)                  # sign(b)/q
     two = FxR.from_int(2, m=2, p=p)
     for _ in range(7 if p > 63 else 6):
-        by = retag_fxr(b_norm * y, 2)          # b'·y ≈ 1 (m=2)
+        by = b_norm * y                        # b'·y ≈ 1 at m = 14 + m_y = 2 (the sub below asserts it)
         diff = two - by                              # 2 − b'·y ≈ 1 (m=2)
         y_new = y * diff                             # m = m_y + 2
         y = FxR(x=y_new.x << (y_new.m - m_y), m=m_y, p=p)   # back to m_y (exact)

@@ -39,7 +39,6 @@ The template re-reads it at the next `pdflatex` run.
 |---|---|---|
 | `fft_precision.tex` | `bench_fft_precision.py` | `fft_precision.csv` |
 | `div_precision.tex` | `bench_div_precision.py` | `div_precision.csv` |
-| `ffldl_precision.tex` | `bench_ffldl_precision.py` | `ffldl_precision.csv` |
 | `ffsampling_precision_selfconsistent_n512.tex` | `bench_ffsampling_precision.py` | `ffsampling_precision_selfconsistent_n512.csv` |
 | `_template_loglog.tex` | (generic) | — |
 | `_template_hist.tex` | (generic) | — |

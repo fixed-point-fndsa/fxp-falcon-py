@@ -12,7 +12,6 @@ Strategy:
      d. Compare z_ref and z_fxp (must be bit-identical per coefficient).
 """
 
-import math
 import os
 import random
 import time
@@ -24,16 +23,15 @@ import _path_setup  # noqa: F401, E402  (sets up sys.path)
 
 # Reference (float) Falcon.
 from falcon import SecretKey  # noqa: E402
-from fft import fft, neg  # noqa: E402
-from ffsampling import gram as gram_float, ffsampling_fft as ffsampling_ref  # noqa: E402
+from fft import fft  # noqa: E402
+from ffsampling import ffsampling_fft as ffsampling_ref  # noqa: E402
 from rng import ChaCha20  # noqa: E402
 from common import q as FALCON_Q  # noqa: E402
 
 # fxp side.
-from fxtypes import FxR, FxC, RootGram  # noqa: E402
-from ffldl_fxp import keygen_fxp  # noqa: E402
+from fxtypes import FxR, FxC  # noqa: E402
 from ffsampling_fxp import ffsampling_fxp  # noqa: E402
-from sign_tweak import _build_t_tweaked  # noqa: E402
+from sign_tweak import _build_t_tweaked, _build_fxp_tree_cache  # noqa: E402
 # All m budgets come from the single source.
 from m_budgets import M_SIGN_DEFAULT, M_SIGN_STD  # noqa: E402
 
@@ -59,31 +57,14 @@ def fxc_poly_to_complex(poly):
 # --------------------------------------------------------------------- #
 
 
-def build_fxp_tree_for_sk(sk, p=63):
-    """Build the fxp normalized ffLDL tree on the same basis as sk."""
-    B0 = [[sk.g, neg(sk.f)], [sk.G, neg(sk.F)]]
-    Gram = gram_float(B0)
-    G_fft_float = [[fft(Gram[i][j]) for j in range(2)] for i in range(2)]
-
-    # Per-block tight m for the Gram (from bench_ffldl_precision._run_fxp recipe).
-    def _tight_m(poly):
-        return max(1, int(math.ceil(math.log2(max(abs(z) for z in poly)))) + 1)
-
-    # RootGram (g00, g10): the diagonal G_00 is Hermitian-real → PolyR (take
-    # Re, dropping the float-FFT noise on Im); g10 complex; G_11 recovered by
-    # the NTRU-root LDL via the q²/D_00 shortcut.
-    g00_f, g10_f = G_fft_float[0][0], G_fft_float[1][0]
-    g00 = [FxR.from_float(z.real, m=_tight_m(g00_f), p=p) for z in g00_f]
-    g10 = complex_poly_to_fxc(g10_f, m=_tight_m(g10_f), p=p)
-    G_fxp = RootGram(g00=g00, g10=g10)
-
-    inv_sigma_fxr = FxR.from_float(1.0 / sk.sigma, m=-7, p=p)   # 1/σ (INV_SIGMA)
-    sigmin_fxr = FxR.from_float(sk.sigmin, m=1, p=p)            # σ_min (for ccs_i)
-    # m budgets are fixed constants inside keygen_fxp (M_L10_ROOT=5, M_D=18);
-    # keygen_fxp default iters=6 (iters=2 under-converges the rsqrt to
-    # ε≈3e-3 ≫ 2^-63, corrupting every σ_i).
-    tree = keygen_fxp(G_fxp, q=FALCON_Q, inv_sigma=inv_sigma_fxr, sigmin=sigmin_fxr)
-    return tree
+def build_fxp_tree_for_sk(sk):
+    """Build the DEPLOYED fxp normalized ffLDL tree for sk — exactly the path
+    production signing uses: the fxp gram via `_gram_fft_fxp(_build_B0_fft_fxp_cache(sk))`
+    at the fixed budgets (g00@M_G00, g10@M_G01), then `keygen_fxp` with the
+    hardcoded σ constants. NOT an idealized per-entry tight-m gram (which would
+    feed the tree a tighter input than production and understate the divergence
+    from the float reference)."""
+    return _build_fxp_tree_cache(sk)
 
 
 # --------------------------------------------------------------------- #

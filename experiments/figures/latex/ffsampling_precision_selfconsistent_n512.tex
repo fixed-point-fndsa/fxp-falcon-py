@@ -6,7 +6,7 @@
 \begin{semilogyaxis}[
     width=0.85\linewidth, height=0.55\linewidth,
     xlabel={ffsampling level (0 = root)},
-    ylabel={$\|t_0' - t_0'_{\mathrm{mpmath}}\|_\infty$ (median)},
+%    ylabel={$\|t_0' - t_0'_{\mathrm{mpmath}}\|_\infty$ (median)},
     grid=both,
     grid style={line width=.1pt, draw=gray!30},
     major grid style={line width=.2pt, draw=gray!50},
@@ -20,23 +20,23 @@
     {../../tables/ffsampling_precision_selfconsistent_n512.csv};
 \addlegendentry{float64 (\(p=53\))}
 
-\addplot+[mark=square*, mark size=2.0, very thick] table
-    [x=level, y=fxp63, col sep=comma]
-    {../../tables/ffsampling_precision_selfconsistent_n512.csv};
-\addlegendentry{FxP \(p=63\), self-consistent}
-
-\addplot+[mark=triangle*, mark size=2.5, very thick] table
-    [x=level, y=fxp127, col sep=comma]
-    {../../tables/ffsampling_precision_selfconsistent_n512.csv};
-\addlegendentry{FxP \(p=127\), self-consistent}
-
-% Quantization floors.
-\draw[dashed, orange, thick] ({rel axis cs:0,0} |- {axis cs:0, 2^-45})
-    -- ({rel axis cs:1,0} |- {axis cs:0, 2^-45})
-    node[pos=0.5, above] {\footnotesize FxP-63 quantum $2^{-45}$};
-\draw[dashed, green!60!black, thick] ({rel axis cs:0,0} |- {axis cs:0, 2^-109})
-    -- ({rel axis cs:1,0} |- {axis cs:0, 2^-109})
-    node[pos=0.5, above] {\footnotesize FxP-127 quantum $2^{-109}$};
+%\addplot+[mark=square*, mark size=2.0, very thick] table
+%    [x=level, y=fxp63, col sep=comma]
+%    {../../tables/ffsampling_precision_selfconsistent_n512.csv};
+%\addlegendentry{FxP \(p=63\), self-consistent}
+%
+%\addplot+[mark=triangle*, mark size=2.5, very thick] table
+%    [x=level, y=fxp127, col sep=comma]
+%    {../../tables/ffsampling_precision_selfconsistent_n512.csv};
+%\addlegendentry{FxP \(p=127\), self-consistent}
+%
+%% Quantization floors.
+%\draw[dashed, orange, thick] ({rel axis cs:0,0} |- {axis cs:0, 2^-45})
+%    -- ({rel axis cs:1,0} |- {axis cs:0, 2^-45})
+%    node[pos=0.5, above] {\footnotesize FxP-63 quantum $2^{-45}$};
+%\draw[dashed, green!60!black, thick] ({rel axis cs:0,0} |- {axis cs:0, 2^-109})
+%    -- ({rel axis cs:1,0} |- {axis cs:0, 2^-109})
+%    node[pos=0.5, above] {\footnotesize FxP-127 quantum $2^{-109}$};
 
 \end{semilogyaxis}
 \end{tikzpicture}

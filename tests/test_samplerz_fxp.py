@@ -52,7 +52,11 @@ def test_samplerz_fxp_byte_identical_to_reference():
     # Half the centers are pushed near an integer (the LTYZ-sensitive locus).
     near = [0.0, 1e-6, 1e-4, 1e-3, 1e-2, 1.0 - 1e-6, 1.0 - 1e-3]
     for i in range(_N_TRIALS):
-        k = rng.randint(-40, 40)
+        # |mu| spans small..large across magnitude tiers: the cancellation in
+        # r = mu - floor(mu) worsens with magnitude, and the m=18 sign budget
+        # admits |mu| < 2^18. Keeping the near-integer frac at large k stresses
+        # the worst case (big subtraction, tiny result).
+        k = rng.randint(-(1 << rng.randint(0, 17)), 1 << rng.randint(0, 17))
         frac = rng.random() if i % 2 else rng.choice(near)
         mu = k + frac
         sigma = rng.uniform(_SIGMIN + 1e-3, _SIGMAX - 1e-3)
