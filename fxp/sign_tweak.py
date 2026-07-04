@@ -246,9 +246,11 @@ def sign(sk: SecretKey, message: bytes, use_tweak: int = USE_TWEAK_STD,
     # n is a power of 2: log2(n) = n.bit_length() − 1 (pure int).
     header = (0x30 + (sk.n.bit_length() - 1)).to_bytes(1, "little")
 
+    # Salt drawn ONCE, before the retry loop (alg:sign / reference falcon.py):
+    # a norm/encoding rejection re-runs only ffsampling, same salt and target.
+    salt = randombytes(SALT_LEN)
+    hashed = sk.hash_to_point(message, salt)
     for _ in range(max_tries):
-        salt = randombytes(SALT_LEN)
-        hashed = sk.hash_to_point(message, salt)
         s, extras = sample_preimage(sk, hashed, use_tweak=use_tweak,
                                     randombytes=randombytes,
                                     use_fxp_ffsampling=use_fxp_ffsampling)

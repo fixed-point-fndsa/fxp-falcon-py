@@ -10,10 +10,9 @@ Format:
       L_10 at root     : m = 5    (NTRUGen Check 4: ‖L_10_root‖_∞ ≤ γ_root = 24)
       L_10 non-root    : m = 0    (|L_10| < 1 strict by Cauchy-Schwarz)
       [dss_i, ccs_i] leaf : m = 0 (precomputed samplerz constants, both < 1)
-  - `diff · L_10` widens m by m_L10 (FxC mul: m_out = m_diff + m_L10). At the
-    root (m_L10 = 5) the product lands at M_SIGN + 5 and is retagged back to
-    M_SIGN (exact left-shift; values fit well below 2^{M_SIGN}). At inner
-    levels m_L10 = 0, so it stays at M_SIGN and the retag is a no-op.
+  - `diff · L_10` is emitted straight at M_SIGN via `mul_fft_to` (fused
+    multiply-and-retag, single rounding); the value fits well below
+    2^{M_SIGN} even at the root where m_L10 = 5 (Lemma 13 drift).
 
 Tree shape:
   internal : [L_10_poly, subtree_left, subtree_right]
