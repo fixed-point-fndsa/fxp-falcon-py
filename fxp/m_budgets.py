@@ -30,9 +30,10 @@ M_L10_ROOT = 5
 # L_10 at non-root levels: |·| ≤ 1 (Lemma 9 + α_k interpolation), m=0 is tight.
 M_L10_INNER = 0
 # Gram diagonal D_ii during the ffLDL recursion: the γ_hybrid filter gives
-# |D_ii| ∈ [q/α_h², α_h²·q] ⊂ [2^13, 2^14.5] (Lemma 9), plus drift bits.
-# (Use 19 without the filter.) M_D is shared across all levels; it must hold the
-# loosest (intermediate) diagonals, where 16q = 2^17.58 forces 18.
+# |D_ii| ∈ [q/α_h², α_h²·q] = [q/16, 16q] = [2^9.6, 2^17.6] (Lemma 9).
+# (Use 19 without the filter.) M_D is shared across all levels; the upper end
+# 16q = 2^17.58 forces 18. (The tighter [2^13.1, 2^14.04] window is the
+# α_GPV = 1.17 FINAL-leaf case — see M_D_LEAF below, not this shared budget.)
 M_D = 18
 # FINAL ffLDL leaves specifically (the per-coefficient GS norms fed to rsqrt) are
 # tighter: D_ii ≤ 1.17²·q = 16822 < 2^15 by the stock NTRUGen gs_norm filter
@@ -51,9 +52,16 @@ M_NORM_OUT = 0
 
 # Hashed point: |point|_∞ < q < 2^14.
 M_POINT_COEF = 14
-# B0 = [[g,−f],[G,−F]] coefficients: ‖f,F‖_∞ ≤ γ_FG < 2^12, kept at 13 (the rest
-# of the m chain was tuned for 13; tightening to 12 would require re-tuning).
-M_B0_COEF = 13
+# B0 = [[g,−f],[G,−F]] coefficient-domain loads (before fft_fxp) — NOT the
+# FFT-domain γ bounds (M_B_FG / M_B_FG_UP below). Integers embed exactly at
+# any tag; tight tags shrink every FFT-internal rounding (ULP 2^{m_level−p},
+# m_level = m_in + level).
+#   f, g: ‖f,g‖_∞ ≤ 17 < 2^5 — CDT support (see `ntrugen.gen_poly`).
+M_B0_COEF_FG = 5
+#   F, G: ‖F,G‖_∞ ≤ 127 < 2^7 — int8 encoding filter (see `FG_COEF_LIMIT`).
+M_B0_COEF_FG_UP = 7
+# Tweak target: qt = (−c·F, c·f) mod± q centered ⇒ |qt|_∞ ≤ q/2 < 2^13.
+M_QT_COEF = 13
 
 # --------------------------------------------------------------------- #
 # Signing: ffsampling targets + signature reconstruction.

@@ -1,13 +1,14 @@
 """
 This file implements the section 3.8.2 of Falcon's documentation.
 """
+from os import urandom
+
 from fft import fft, ifft, add_fft, mul_fft, adj_fft, div_fft
 from fft import add, mul, div, adj
 from ntt import ntt
 from common import sqnorm
-from samplerz import samplerz
 from ntrugen_filters import (
-    GAMMA_FG_512, GAMMA_HYBRID, GAMMA_FG_UPPER_512, GAMMA_ROOT,
+    GAMMA_FG_512, GAMMA_HYBRID, GAMMA_FG_UPPER_512, GAMMA_ROOT, FG_COEF_LIMIT,
     alpha_hybrid_squared, norm_fft_fg, norm_fft_FG, norm_fft_k,
 )
 
@@ -217,22 +218,64 @@ def gs_norm(f, g, q):
     return max(sqnorm_fg, sqnorm_FG)
 
 
+# CDT tables for the (f, g) coefficient Gaussian sigma_fg = 1.17*sqrt(q/2n),
+# verbatim from the FN-DSA reference keygen (Pornin's kgen_gauss.c). A sample
+# is #{tab[k] < y} - kmax for a uniform 16-bit y, so the support is HARD-
+# bounded by the table length: kmax = 24 / 17 / 12 for n = 256 / 512 / 1024.
+# The n=512 bound (|c| <= 17 < 2^5) licenses M_B0_COEF_FG = 5 (m_budgets).
+_GAUSS_256 = [
+        1,     3,     6,    11,    22,    40,    73,   129,
+      222,   371,   602,   950,  1460,  2183,  3179,  4509,
+     6231,  8395, 11032, 14150, 17726, 21703, 25995, 30487,
+    35048, 39540, 43832, 47809, 51385, 54503, 57140, 59304,
+    61026, 62356, 63352, 64075, 64585, 64933, 65164, 65313,
+    65406, 65462, 65495, 65513, 65524, 65529, 65532, 65534,
+]
+_GAUSS_512 = [
+        1,     4,    11,    28,    65,   146,   308,   615,
+     1164,  2083,  3535,  5692,  8706, 12669, 17574, 23285,
+    29542, 35993, 42250, 47961, 52866, 56829, 59843, 62000,
+    63452, 64371, 64920, 65227, 65389, 65470, 65507, 65524,
+    65531, 65534,
+]
+_GAUSS_1024 = [
+        2,     8,    28,    94,   280,   742,  1761,  3753,
+     7197, 12472, 19623, 28206, 37329, 45912, 53063, 58338,
+    61782, 63774, 64793, 65255, 65441, 65507, 65527, 65533,
+]
+
+
 def gen_poly(n):
     """
     Generate a polynomial of degree at most (n - 1), with coefficients
     following a discrete Gaussian distribution D_{Z, 0, sigma_fg} with
-    sigma_fg = 1.17 * sqrt(q / (2 * n)).
+    sigma_fg = 1.17 * sqrt(q / (2 * n)) — via the FN-DSA CDT tables above
+    (Pornin's `sample_f` minus its parity loop, which lives in `ntru_gen`'s
+    FORCE_ODD_GS_NORM filter). Finite support: n=512 -> |c| <= 17.
     """
-    # 1.17 * sqrt(12289 / 8192)
-    sigma = 1.43300980528773
-    assert(n < 4096)
-    f0 = [samplerz(0, sigma, sigma - 0.001) for _ in range(4096)]
+    if n == 512:
+        tab, zz = _GAUSS_512, 1
+    elif n == 1024:
+        tab, zz = _GAUSS_1024, 1
+    else:  # n <= 256: sum 256//n samples from the degree-256 table
+        assert n <= 256 and 256 % n == 0
+        tab, zz = _GAUSS_256, 256 // n
+    kmax = len(tab) // 2
+
+    def cdt_sample():
+        # ONE uniform 16-bit y per sample; s = #{tab[k] < y} − kmax.
+        y = int.from_bytes(urandom(2), "little")
+        return sum(1 for t in tab if t < y) - kmax
+
     f = [0] * n
-    k = 4096 // n
     for i in range(n):
-        # We use the fact that adding k Gaussian samples of std. dev. sigma
-        # gives a Gaussian sample of std. dev. sqrt(k) * sigma.
-        f[i] = sum(f0[i * k + j] for j in range(k))
+        while True:
+            s = sum(cdt_sample() for _ in range(zz))
+            # Mirror the C: resample if outside int8 (only reachable for
+            # small n, where zz > 1 sums widen the support).
+            if -127 <= s <= 127:
+                break
+        f[i] = s
     return f
 
 
@@ -251,6 +294,8 @@ def ntru_gen(n):
       Check 2 (γ_hybrid):  bounds α_hybrid → governs `M_D = 18`.
       Check 3 (γ_FG):      bounds ‖fft(F,G)‖_∞ → governs `m_sign = 21`.
       Check 4 (γ_root):    bounds ‖fft(L_10_root)‖_∞ → governs `M_L10_ROOT = 5`.
+    Plus the stock FN-DSA encoding limit ‖F,G‖_∞ ≤ 127 (int8 key format,
+    implicit in stock Falcon via the key codec) → `M_B0_COEF_FG_UP = 7`.
     Without these branches, an extreme key could violate the fxp
     m-budgets silently and crash a downstream `|x| < 2^p` assert.
 
@@ -292,6 +337,10 @@ def ntru_gen(n):
             F, G = ntru_solve(f, g)
             F = [int(coef) for coef in F]
             G = [int(coef) for coef in G]
+            # Encoding limit (see FG_COEF_LIMIT); cheap, so run it before
+            # the FFT-based Check 3.
+            if max(max(abs(c) for c in F), max(abs(c) for c in G)) > FG_COEF_LIMIT:
+                continue
             # Check 3: ‖fft(F, G)‖_∞ ≤ γ_FG = 3500 (Falcon-512).
             if norm_fft_FG(F, G) > GAMMA_FG_UPPER_512:
                 continue

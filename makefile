@@ -17,7 +17,7 @@ help:   ## list the available targets
 	  | awk 'BEGIN{FS=":.*## "}{printf "  %-15s %s\n", $$1, $$2}'
 
 test:   ## run the fxp unit tests + numerical KAT
-	$(PY) -m pytest tests/test_fxtypes.py tests/test_nr_fxp.py
+	$(PY) -m pytest tests/
 	$(PY) tests/check_test_vectors.py
 
 test-ref:   ## run Prest's falcon.py reference self-test

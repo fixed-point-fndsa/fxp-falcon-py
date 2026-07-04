@@ -31,8 +31,11 @@ needed): `make figures` (all), or `make fig-{fft,div,ffldl,ffsampling}`.
 ## Precision benchmarks — float64 vs FxP-63 vs FxP-127 vs mpmath-256
 
 Each builds the operation at every precision and compares against a 256-bit
-mpmath ground truth. Recurring finding: **FxP-63 ≈ float64** (~2⁻⁴⁵–2⁻⁵³),
-**FxP-127 ~60 bits more precise**. Each writes a figure + CSV.
+mpmath ground truth. Recurring finding: **FxP-63 ≈ float64 per kernel op**
+(~2⁻⁴⁵–2⁻⁵³), **FxP-127 ~60 bits more precise** — and on the deployed
+keygen chain FxP-63 beats float64 by 5–8 bits per stage (tight B0
+coefficient loads; see `bench_pipeline_precision.py`). Each writes a
+figure + CSV.
 
 | script | what it benchmarks |
 |---|---|

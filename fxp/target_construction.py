@@ -18,7 +18,9 @@ from common import q as FALCON_Q  # noqa: E402
 from fxtypes import FxR, FxC, retag_fxc  # noqa: E402
 from fft_fxp import fft_fxp, retag_poly_fxc  # noqa: E402
 from fxp_constants_p63 import INV_Q_FXC  # noqa: E402  (m=-13, |1/q| ≈ 2^-13.586 < 2^-13)
-from m_budgets import M_POINT_COEF, M_B0_COEF, M_B_FG, M_B_FG_UP  # noqa: E402
+from m_budgets import (  # noqa: E402
+    M_POINT_COEF, M_B0_COEF_FG, M_B0_COEF_FG_UP, M_QT_COEF, M_B_FG, M_B_FG_UP,
+)
 
 
 def _div_by_q_fxc(z: FxC, m_out: int) -> FxC:
@@ -35,9 +37,10 @@ USE_TWEAK_STD = 0          # no tweak (standard target)
 USE_TWEAK_NTT = 1          # Section-5.1 NTT-exact tweak
 
 
-# Coefficient-domain m for fxp inputs (M_POINT_COEF, M_B0_COEF; see
-# m_budgets.py): fft_fxp widens by log₂n − 1 = 8 (n=512), so FFT-domain polys
-# land at m = 22 (c_fft) and m = 21 (b_fft, d_fft).
+# Coefficient-domain m for fxp inputs (M_POINT_COEF, M_B0_COEF_FG[_UP],
+# M_QT_COEF; see m_budgets.py): fft_fxp widens by log₂n − 1 = 8 (n=512), so
+# FFT-domain polys land at m_in + 8 — c_fft at 22, B0 rows at 13 (f,g) / 15
+# (F,G), qt at 21.
 
 
 def _center_signed(poly, modulus):
@@ -99,17 +102,20 @@ def _build_t_tweaked(sk, point):
 
 
 def _build_B0_fft_fxp_cache(sk, p=63):
-    """Lazily build & cache the fxp FFT of B0 = [[g, −f], [G, −F]] on sk, each
-    row retagged once to its tight NTRUGen bound (fft(g), fft(−f) → M_B_FG;
-    fft(G), fft(−F) → M_B_FG_UP). Baking the retag here (an exact left-shift from
-    the loose post-FFT m=21) lets every consumer see the tight m directly —
-    bit-identical to the old per-consumer retags, but run once per key.
+    """Lazily build & cache the fxp FFT of B0 = [[g, −f], [G, −F]] on sk.
+
+    Rows load at their tight coefficient bounds (M_B0_COEF_FG / _FG_UP,
+    derivations in m_budgets) — FFT-internal roundings scale with the
+    running tag, so tight loads buy ~5–8 bits per row. Each row is then
+    retagged once (exact left-shift) to its FFT-domain γ bound (M_B_FG /
+    M_B_FG_UP), so every consumer sees the tight m. Run once per key.
     """
     if sk._B0_fft_fxp is not None:
         return sk._B0_fft_fxp
-    rows = [[sk.g, [-c for c in sk.f]], [sk.G, [-c for c in sk.F]]]
-    [a, b], [c, d] = [[fft_fxp([FxR.from_int(co, m=M_B0_COEF, p=p) for co in poly])
-                       for poly in row] for row in rows]
+    a, b = (fft_fxp([FxR.from_int(co, m=M_B0_COEF_FG, p=p) for co in poly])
+            for poly in (sk.g, [-c for c in sk.f]))
+    c, d = (fft_fxp([FxR.from_int(co, m=M_B0_COEF_FG_UP, p=p) for co in poly])
+            for poly in (sk.G, [-c for c in sk.F]))
     sk._B0_fft_fxp = [
         [retag_poly_fxc(a, M_B_FG), retag_poly_fxc(b, M_B_FG)],        # fft(g), fft(−f) — γ_fg
         [retag_poly_fxc(c, M_B_FG_UP), retag_poly_fxc(d, M_B_FG_UP)],  # fft(G), fft(−F) — γ_FG
@@ -147,6 +153,6 @@ def _build_t_tweaked_fxp(sk, point, m_sign):
     """
     qt0, qt1 = _build_qt(sk, point)
     # |qt| < q/2 < 2^13; FFT widens to m=21 (n=512); mul·INV_Q gives m_sign.
-    t0 = [_div_by_q_fxc(z, m_sign) for z in _fft_int_poly_fxp(qt0, M_B0_COEF)]
-    t1 = [_div_by_q_fxc(z, m_sign) for z in _fft_int_poly_fxp(qt1, M_B0_COEF)]
+    t0 = [_div_by_q_fxc(z, m_sign) for z in _fft_int_poly_fxp(qt0, M_QT_COEF)]
+    t1 = [_div_by_q_fxc(z, m_sign) for z in _fft_int_poly_fxp(qt1, M_QT_COEF)]
     return [t0, t1], [qt0, qt1]

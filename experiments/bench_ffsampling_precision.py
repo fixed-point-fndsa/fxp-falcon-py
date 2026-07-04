@@ -55,7 +55,7 @@ from fft_fxp import (  # noqa: E402
 )
 from ffldl_fxp import keygen_fxp  # noqa: E402
 from sign_tweak import _gram_fft_fxp  # noqa: E402  (deployed Gram, retag-before-mul)
-from m_budgets import M_B_FG, M_B_FG_UP  # noqa: E402
+from m_budgets import M_B_FG, M_B_FG_UP, M_B0_COEF_FG, M_B0_COEF_FG_UP  # noqa: E402
 # p-precise generated constants (NOT from_float — a float64 1/q or 1/σ caps the
 # target / σ_i at ~2^-53 regardless of p, which would hide fxp-127's headroom).
 from fxp_constants_p63 import (  # noqa: E402
@@ -248,21 +248,19 @@ def build_t_at_all_precisions(sk, c, p_fxp_list, m_sign):
     # `target_construction._build_t_standard_fxp` but parametric on p. -----
     # |c_i| < q < 2^14 (point is unsigned hash output in [0, q-1]).
     M_POINT_COEF = 14
-    # |f_i|, |F_i| ≤ γ_FG = 3500 < 2^11.78 < 2^13. Conservative m=13 keeps
-    # one bit of headroom for the FxR invariant.
-    M_B0_COEF = 13
     from fxtypes import retag_fxc  # local: bench-only dep
     t_fxps = {}
     for p in p_fxp_list:
         c_fxc = fft_fxp([FxR.from_int(int(ci), m=M_POINT_COEF, p=p) for ci in c])
-        # Retag fft(F), fft(f) to their tight γ bounds BEFORE the products —
-        # matches the deployed `_build_t_standard_fxp` (M_B_FG_UP=γ_FG for F,
-        # M_B_FG=γ_fg for f). Multiplying at the loose post-FFT m would discard
-        # ~6 bits (see target_construction._build_t_standard_fxp).
+        # Coefficient loads at the tight per-row bounds (M_B0_COEF_FG_UP=7 for
+        # F, M_B0_COEF_FG=8 for f), then retag fft(F), fft(f) to their tight γ
+        # bounds BEFORE the products — matches the deployed
+        # `_build_t_standard_fxp` (M_B_FG_UP=γ_FG for F, M_B_FG=γ_fg for f).
+        # Multiplying at the loose post-FFT m would discard ~6 bits.
         F_fxc = retag_poly_fxc(
-            fft_fxp([FxR.from_int(int(F_i), m=M_B0_COEF, p=p) for F_i in sk.F]), M_B_FG_UP)
+            fft_fxp([FxR.from_int(int(F_i), m=M_B0_COEF_FG_UP, p=p) for F_i in sk.F]), M_B_FG_UP)
         f_fxc = retag_poly_fxc(
-            fft_fxp([FxR.from_int(int(f_i), m=M_B0_COEF, p=p) for f_i in sk.f]), M_B_FG)
+            fft_fxp([FxR.from_int(int(f_i), m=M_B0_COEF_FG, p=p) for f_i in sk.f]), M_B_FG)
         inv_q = _INVQ[p]   # p-precise generated 1/q (m=-13), as in production
                            # target_construction._div_by_q_fxc (NOT a float64 1/q).
         t0 = [retag_fxc(-(ci * Fi) * inv_q, m_sign)

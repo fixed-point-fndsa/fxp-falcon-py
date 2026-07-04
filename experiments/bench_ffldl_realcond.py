@@ -45,7 +45,9 @@ from fft import neg  # noqa: E402
 from fxtypes import FxR, RootGram  # noqa: E402
 from fft_fxp import fft_fxp, retag_poly_fxr, retag_poly_fxc  # noqa: E402
 from ffldl_fxp import ffldl_fft_fxp_ntru_root  # noqa: E402
-from m_budgets import M_G00, M_G01, M_B0_COEF, M_B_FG, M_B_FG_UP  # noqa: E402
+from m_budgets import (  # noqa: E402
+    M_G00, M_G01, M_B0_COEF_FG, M_B0_COEF_FG_UP, M_B_FG, M_B_FG_UP,
+)
 from sign_tweak import _gram_fft_fxp  # noqa: E402
 
 Q = 12289
@@ -55,12 +57,14 @@ mpmath.mp.prec = 256
 
 
 def _b0_fft_at_p(sk, p):
-    """fxp FFT of B0 = [[g,−f],[G,−F]] at precision p, retagged to the tight γ
-    bounds (M_B_FG / M_B_FG_UP) like the deployed `_build_B0_fft_fxp_cache` —
+    """fxp FFT of B0 = [[g,−f],[G,−F]] at precision p, coefficient loads at
+    the tight per-row bounds and rows retagged to the tight γ bounds
+    (M_B_FG / M_B_FG_UP) like the deployed `_build_B0_fft_fxp_cache` —
     `_gram_fft_fxp` asserts that contract (no cache here, so p-parametric)."""
-    rows = [[sk.g, neg(sk.f)], [sk.G, neg(sk.F)]]
-    [a, b], [c, d] = [[fft_fxp([FxR.from_int(co, m=M_B0_COEF, p=p) for co in poly])
-                       for poly in row] for row in rows]
+    a, b = (fft_fxp([FxR.from_int(co, m=M_B0_COEF_FG, p=p) for co in poly])
+            for poly in (sk.g, neg(sk.f)))
+    c, d = (fft_fxp([FxR.from_int(co, m=M_B0_COEF_FG_UP, p=p) for co in poly])
+            for poly in (sk.G, neg(sk.F)))
     return [[retag_poly_fxc(a, M_B_FG), retag_poly_fxc(b, M_B_FG)],
             [retag_poly_fxc(c, M_B_FG_UP), retag_poly_fxc(d, M_B_FG_UP)]]
 

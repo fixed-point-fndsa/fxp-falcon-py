@@ -252,15 +252,16 @@ def plot(agg):
 
 
 # fxp-63 RMSE ceilings per stage — the pass/fail contract (the *verification*,
-# vs the measurement above). Observed RMSE is ~2^-33 / -39 / -53 / -38; each
+# vs the measurement above). Observed RMSE is ~2^-41 / -46 / -60 / -43 (10
+# keys, tight B0 coefficient loads M_B0_COEF_FG=5 / M_B0_COEF_FG_UP=7); each
 # ceiling is observed + ~3 bits, so a gross precision regression (a wrong
 # budget, a broken reciprocal, an overflow → many bits lost) trips it, while
 # normal key-to-key variation of the aggregate MSE stays well under.
 _RMSE_CEIL = {
-    "gram":             2 ** -30,
-    "ffldl(L10+D_ii)":  2 ** -36,
-    "sigma_i(dss,ccs)": 2 ** -50,
-    "target_t":         2 ** -35,
+    "gram":             2 ** -38,
+    "ffldl(L10+D_ii)":  2 ** -43,
+    "sigma_i(dss,ccs)": 2 ** -57,
+    "target_t":         2 ** -40,
 }
 
 
