@@ -60,7 +60,7 @@ def fxc_poly_to_complex(poly):
 def build_fxp_tree_for_sk(sk):
     """Build the DEPLOYED fxp normalized ffLDL tree for sk — exactly the path
     production signing uses: the fxp gram via `_gram_fft_fxp(_build_B0_fft_fxp_cache(sk))`
-    at the fixed budgets (g00@M_G00, g10@M_G01), then `keygen_fxp` with the
+    at the fixed budgets (g00@M_D, g10@M_G01), then `keygen_fxp` with the
     hardcoded σ constants. NOT an idealized per-entry tight-m gram (which would
     feed the tree a tighter input than production and understate the divergence
     from the float reference)."""

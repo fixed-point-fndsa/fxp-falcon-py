@@ -29,7 +29,6 @@ from fft_fxp import (
     mul_fft_fxp,
     div_fft_fxp,
     split_real_fxp,
-    retag_poly_fxr,
 )
 from nr_fxp import rsqrt, nr_reciprocal
 from m_budgets import M_NORM_OUT, M_L10_ROOT, M_L10_INNER, M_D, M_D_LEAF
@@ -66,11 +65,17 @@ def ldl_fft_fxp_ntru_root(G: RootGram, q: int) -> tuple[PolyC, PolyR, PolyR]:
     G00, G10 = G.g00, G.g10   # G00 real (PolyR), G10 complex (PolyC)
     p = G00[0].p
     L10 = div_fft_fxp(G10, G00, m_out=M_L10_ROOT)
-    D00 = retag_poly_fxr(G00, M_D)
+    # G00 arrives at M_D (emitted there by `_gram_fft_fxp`), so the root
+    # D00 = G00 verbatim — no widen (the former retag 17→18 is collapsed).
+    assert G00[0].m == M_D, f"ntru_root: G00 at m={G00[0].m}, want M_D={M_D}"
+    D00 = G00
     # det(G) = q² (symplectic) ⇒ D_11 = q²/G_00 componentwise; real. Use the
-    # NR reciprocal (1/G_00) then multiply, matching div_fft_fxp.
-    q_sq_fxr = FxR.from_int(q * q, m=(q * q).bit_length(), p=p)
-    D11 = [retag_fxr(q_sq_fxr * nr_reciprocal(u), M_D) for u in G00]
+    # NR reciprocal (1/G_00) then multiply by q TWICE: the constant stays at
+    # m = 14 and the chain transits at m ≤ 20 (a single ×q² would tag the
+    # constant at m = 28, the largest tag of the whole pipeline). Costs one
+    # extra rounding at ULP ≤ 2^-57 — buried under the M_D retag (2^-45).
+    q_fxr = FxR.from_int(q, m=q.bit_length(), p=p)
+    D11 = [retag_fxr(q_fxr * (q_fxr * nr_reciprocal(u)), M_D) for u in G00]
     return L10, D00, D11
 
 
@@ -124,8 +129,8 @@ def keygen_fxp(
     """ffLDL* + normalize_tree on the NTRU Gram, yielding the signing tree.
 
     The caller builds the Gram `G = B·B*` in FFT domain as a 2x2 matrix of
-    FxC polys (in production via `sign_tweak._gram_fft_fxp`, which emits g00/g10
-    at the fixed budgets M_G00 / M_G01).
+    FxC polys (in production via `sign_tweak._gram_fft_fxp`, which emits g00
+    at M_D and g10 at M_G01).
     The m budgets are fixed Falcon-512 constants (M_L10_ROOT=5, M_L10_INNER=0,
     M_D=18 — see `m_budgets` and `ldl_fft_fxp_ntru_root`); the caller's Gram
     must come from a key passing the full NTRUGen filter. `inv_sigma` (= 1/σ,

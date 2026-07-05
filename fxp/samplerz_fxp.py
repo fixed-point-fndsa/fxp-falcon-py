@@ -11,6 +11,7 @@ from typing import Callable, Literal
 from beartype import beartype
 
 from fxtypes import FxR, retag_fxr, _bankers_shift
+from m_budgets import M_SZ_DIFF
 
 
 # Constants (Falcon spec / reference samplerz).
@@ -199,7 +200,7 @@ def berexp_fxp(x: FxR, ccs: FxR,
     s_ln2 = FxR.from_int(s_int, m=x.m, p=_P) * LN2_FXR
     r_fxr = x - s_ln2
     # r ∈ [0, ln2) ⊂ [0, 1) → m=0 tight (mandatory for approxexp_fxp).
-    # Banker-shift drops ≤ ~6 LSBs (residual ~2^-57, ≫ samplerz sensitivity).
+    # Tighten 10→0: exact left-shift (samplerz has NO rounding retags).
     r_fxr = retag_fxr(r_fxr, 0)
 
     s_int = min(s_int, 63)
@@ -232,17 +233,19 @@ def samplerz_fxp(mu: FxR, dss: FxR, ccs: FxR,
     data-dependent in the Bernoulli rejection (standard samplerz).
     """
     assert mu.p == _P and dss.p == _P and ccs.p == _P, "samplerz_fxp requires p=63"
+    # Interface contract (see M_SZ_DIFF): the r retag below must be an exact
+    # left-shift, which requires mu to arrive at m ≥ M_SZ_DIFF.
+    assert mu.m >= M_SZ_DIFF, f"samplerz_fxp: mu.m={mu.m} < M_SZ_DIFF={M_SZ_DIFF}"
     if mode is None:
         mode = SAMPLERZ_MODE
 
-    # mu = s_int + r, with |r| < 1. Retag r once to m=5 (the format of `diff`
-    # below: |z_int − r| ≤ 18.5 < 2^5), an exact left-shift since r_raw is at
-    # mu.m ≥ 5 — so r is exact at m=5 and the loop needs no per-iteration retag.
+    # mu = s_int + r, with |r| < 1. Retag r once to M_SZ_DIFF (the format of
+    # `diff` below) — exact, so the loop needs no per-iteration retag.
     if mode == "floor":
         s_int, r_raw = _floor_and_frac(mu)
     else:
         s_int, r_raw = _round_and_frac(mu)
-    r_fxr = retag_fxr(r_raw, 5)
+    r_fxr = retag_fxr(r_raw, M_SZ_DIFF)
 
     while True:
         z0 = basesampler(randombytes, mode=mode)             # ∈ [0, 18]
@@ -260,11 +263,12 @@ def samplerz_fxp(mu: FxR, dss: FxR, ccs: FxR,
             sigma_correction_int = z0 * z0 - z0              # ≤ 18·17 = 306
 
         # x = (z_int − r)²·dss − sigma_correction·INV_2SIGMA2. Bounds:
-        #   |z_int − r| ≤ 18.5 < 2^5 → m=5; squared at m=10; ·dss keeps m=10
-        #   sigma_correction ≤ 324 < 2^10; built at m=10 to match term1 directly
-        diff = FxR.from_int(z_int, m=5, p=_P) - r_fxr
-        term1 = (diff * diff) * dss                       # always m=10
-        term2 = FxR.from_int(sigma_correction_int, m=10, p=_P) * INV_2SIGMA2_FXR  # m=10, aligned to term1
+        #   |z_int − r| ≤ 19.5 < 2^M_SZ_DIFF; squared → 2·M_SZ_DIFF; ·dss keeps it
+        #   sigma_correction ≤ 324 < 2^10; built at 2·M_SZ_DIFF to match term1
+        diff = FxR.from_int(z_int, m=M_SZ_DIFF, p=_P) - r_fxr
+        term1 = (diff * diff) * dss                       # m = 2·M_SZ_DIFF
+        term2 = (FxR.from_int(sigma_correction_int, m=2 * M_SZ_DIFF, p=_P)
+                 * INV_2SIGMA2_FXR)                       # aligned to term1
         x_fxr = term1 - term2
 
         # x ≥ 0 by construction: term1, term2 ≥ 0, and for z0 ≥ 1 math gives

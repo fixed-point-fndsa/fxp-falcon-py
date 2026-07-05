@@ -42,11 +42,11 @@ from _precision_ref import (  # noqa: E402
 
 from falcon import SecretKey  # noqa: E402
 from fft import neg  # noqa: E402
-from fxtypes import FxR, RootGram  # noqa: E402
-from fft_fxp import fft_fxp, retag_poly_fxr, retag_poly_fxc  # noqa: E402
+from fxtypes import FxR  # noqa: E402
+from fft_fxp import fft_fxp, retag_poly_fxc  # noqa: E402
 from ffldl_fxp import ffldl_fft_fxp_ntru_root  # noqa: E402
 from m_budgets import (  # noqa: E402
-    M_G00, M_G01, M_B0_COEF_FG, M_B0_COEF_FG_UP, M_B_FG, M_B_FG_UP,
+    M_B0_COEF_FG, M_B0_COEF_FG_UP, M_B_FG, M_B_FG_UP,
 )
 from sign_tweak import _gram_fft_fxp  # noqa: E402
 
@@ -70,11 +70,9 @@ def _b0_fft_at_p(sk, p):
 
 
 def _prod_tree(sk, p):
-    """Deployed keygen path at precision p: B0 → _gram_fft_fxp → ffLDL root."""
-    gram = _gram_fft_fxp(_b0_fft_at_p(sk, p))
-    G = RootGram(g00=retag_poly_fxr(gram.g00, M_G00),
-                 g10=retag_poly_fxc(gram.g10, M_G01))
-    return ffldl_fft_fxp_ntru_root(G, q=Q)
+    """Deployed keygen path at precision p: B0 → _gram_fft_fxp → ffLDL root
+    (the gram already emits g00@M_D / g10@M_G01 — no retag needed)."""
+    return ffldl_fft_fxp_ntru_root(_gram_fft_fxp(_b0_fft_at_p(sk, p)), q=Q)
 
 
 def _walk_levels(ref_mp, tree, conv, acc):

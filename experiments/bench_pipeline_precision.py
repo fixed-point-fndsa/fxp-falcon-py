@@ -51,11 +51,8 @@ from _precision_ref import (  # noqa: E402
 from falcon import SecretKey  # noqa: E402  (its ntru_gen applies the full NTRUGen filter)
 from fft import neg, fft as fft_float  # noqa: E402
 from ffsampling import gram as gram_float  # noqa: E402
-from fxtypes import RootGram  # noqa: E402
-from fft_fxp import retag_poly_fxr, retag_poly_fxc  # noqa: E402
 from ffldl_fxp import ffldl_fft_fxp_ntru_root, normalize_tree_fxp  # noqa: E402
 from ffsampling_fxp import ffsampling_fxp  # noqa: E402
-from m_budgets import M_G00, M_G01  # noqa: E402
 from target_construction import (  # noqa: E402
     _build_B0_fft_fxp_cache, _build_t_standard, _build_t_standard_fxp,
 )
@@ -143,9 +140,8 @@ def measure_key(sk, key_idx, m_sign=21):
         _abs_errs(_float_poly_to_mp(fft_float(Gfl[1][0])), G_mp[1][0])
 
     # ---- Stage 2: ffLDL tree (L10 every node + leaf D_ii) ----
-    G_fxp = RootGram(g00=retag_poly_fxr(gram.g00, M_G00),
-                     g10=retag_poly_fxc(gram.g10, M_G01))
-    tree_unnorm = ffldl_fft_fxp_ntru_root(G_fxp, q=Q)
+    # (the gram already emits g00@M_D / g10@M_G01 — no retag needed)
+    tree_unnorm = ffldl_fft_fxp_ntru_root(gram, q=Q)
     _tree_abs_errs(tree_ref_mp, tree_unnorm, _fxc_poly_to_mp, out["ffldl(L10+D_ii)"]["fxp"])
     _tree_abs_errs(tree_ref_mp, _run_float(B, n), _float_poly_to_mp, out["ffldl(L10+D_ii)"]["fp"])
 

@@ -67,7 +67,7 @@ _FLOAT_BUILDERS = {
 # All fixed-point m budgets live in `m_budgets.py` (single source of truth
 # with their derivations). Imported here for the signing pipeline.
 from m_budgets import (  # noqa: E402
-    M_G00, M_G01,
+    M_D, M_G01,
     M_SIGN_DEFAULT, M_SIGN_STD, M_B_FG, M_B_FG_UP, M_S_INTER,
 )
 
@@ -78,7 +78,9 @@ def _gram_fft_fxp(B0_fft):
     `B0_fft` must come from `_build_B0_fft_fxp_cache` (rows at their tight γ
     bounds M_B_FG / M_B_FG_UP): multiplying at the loose post-FFT m=21 would land
     each product at m=42 and truncate ~12 bits, so tight inputs are load-bearing
-    here. Products are emitted straight at the per-entry sum bounds M_G00 / M_G01.
+    here. g00 is emitted straight at M_D (the shared ffLDL recursion budget:
+    G_00 < 2·γ_fg² < 2^17 fits with one bit of slack, and the root D00 = G00
+    then needs no widen); g10 at its per-entry sum bound M_G01.
 
     Returns a `RootGram`: g00 = |a|²+|b|² (real), g10 = adj(G_01); G_11 is not
     computed (see `RootGram`).
@@ -89,9 +91,9 @@ def _gram_fft_fxp(B0_fft):
     a_adj, b_adj = adj_fft_fxp(a), adj_fft_fxp(b)
     c_adj, d_adj = adj_fft_fxp(c), adj_fft_fxp(d)
     # G_00 = |a|²+|b|² < 2^17 (real → keep .re); G_01 = a·c*+b·d* < 2^21.
-    # mul_fft_to emits each product at the sum bound (fits the add, single round).
-    G00 = [z.re for z in add_fft_fxp(mul_fft_to(a, a_adj, M_G00),
-                                     mul_fft_to(b, b_adj, M_G00))]
+    # mul_fft_to emits each product at the target bound (fits the add, single round).
+    G00 = [z.re for z in add_fft_fxp(mul_fft_to(a, a_adj, M_D),
+                                     mul_fft_to(b, b_adj, M_D))]
     G01 = add_fft_fxp(mul_fft_to(a, c_adj, M_G01),
                       mul_fft_to(b, d_adj, M_G01))
     return RootGram(g00=G00, g10=adj_fft_fxp(G01))
@@ -156,11 +158,11 @@ def _build_fxp_tree_cache(sk):
     if sk._fxp_tree is not None:
         return sk._fxp_tree
 
-    # Gram in FFT domain (B0·adj(B0^T)): `_gram_fft_fxp` already emits g00/g10 at
-    # the tight per-entry bounds M_G00/M_G01 (NTRUGen Checks 1b/3) that keygen_fxp
-    # relies on, so we assert the contract instead of retagging.
+    # Gram in FFT domain (B0·adj(B0^T)): `_gram_fft_fxp` already emits g00 at
+    # M_D (shared recursion budget, root D00 = G00 without a widen) and g10 at
+    # M_G01, so we assert the contract instead of retagging.
     gram = _gram_fft_fxp(_build_B0_fft_fxp_cache(sk))
-    assert gram.g00[0].m == M_G00 and gram.g10[0].m == M_G01
+    assert gram.g00[0].m == M_D and gram.g10[0].m == M_G01
 
     tree = keygen_fxp(gram, q=FALCON_Q, inv_sigma=_inv_sigma_fxp(sk),
                       sigmin=_sigmin_fxp(sk))
