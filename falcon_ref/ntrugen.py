@@ -287,10 +287,10 @@ def ntru_gen(n):
 
     Four paper Checks are enforced (cf. `ntrugen_filters.py`):
       Check 1a (gs_norm):  pre-filter ‖(g, −f)‖_2² ≤ 1.17²·q.
-      Check 1b (γ_fg):     ‖fft(f, g)‖_∞ < γ_fg = 255 strict → m_B_fg = 8
-                           safe in `_reconstruct_s_fxp`. Empirical rejection
-                           rate post-1a ≈ 13.4% (500 keys). Pre-NTRUSolve,
-                           so wall-clock impact ~0.1% (cf. ntrugen_filters).
+      Check 1b (γ_fg):     ‖fft(f, g)‖_∞ < γ_fg = 255 strict → M_B_FG = 8
+                           (B0 row tags). Empirical rejection rate post-1a
+                           ≈ 13.4% (500 keys). Pre-NTRUSolve, so wall-clock
+                           impact ~0.1% (cf. ntrugen_filters).
       Check 2 (γ_hybrid):  bounds α_hybrid → governs `M_D = 18`.
       Check 3 (γ_FG):      bounds ‖fft(F,G)‖_∞ → governs `m_sign = 21`.
       Check 4 (γ_root):    bounds ‖fft(L_10_root)‖_∞ → governs `M_L10_ROOT = 5`.
@@ -315,7 +315,7 @@ def ntru_gen(n):
         # accepts the same keys — we mirror the C for consistency.
         # Check 1b: ‖fft(f, g)‖_∞ < γ_fg = 255 strict. Independent of
         # Check 1a (Cauchy-Schwarz on gs_norm gives ‖fft‖_∞ ≤ √n·‖f‖_2 ≈
-        # 2933, much looser). Required for m_B_fg = 8 in `_reconstruct_s_fxp`.
+        # 2933, much looser). Behind M_B_FG = 8 (B0 row tags, m_budgets).
         if norm_fft_fg(f, g) >= GAMMA_FG_512:
             continue
         # Check 2: α_hybrid ≤ γ_hybrid = 4.

@@ -1,11 +1,11 @@
 """Machine-check the m_budgets constants against their derived lower bounds.
 
-Every PROVEN budget must satisfy `chosen >= derived minimum` (inequality, not
+Every budget must satisfy `chosen >= derived minimum` (inequality, not
 equality: some budgets deliberately carry headroom — the slack is reported by
 scripts/derive_m_budgets.py, not asserted here). A failure means a threshold
 (gamma check, CDT table, encoding limit, lambda, ...) changed without
 re-deriving the dependent budgets — the silent-staleness class this test
-exists to kill. M_S_INTER is empirical (see the script) and not asserted.
+exists to kill.
 """
 
 import sys

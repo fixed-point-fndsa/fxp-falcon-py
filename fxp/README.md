@@ -10,8 +10,9 @@ Falcon Signature Scheme* (De Almeida Braga, Fouque, Lachguel, Prest).
 > `_bankers_shift`/`_div_round`, samplerz rejection loop, byte-compare in
 > berexp). A constant-time implementation is out of scope for this prototype.
 >
-> **Falcon-512 only**: `_reconstruct_s_fxp` asserts `sk.n == 512`; n=1024
-> needs numerical re-validation of the per-level precision drop in ffsampling.
+> **Falcon-512 only**: `sample_preimage` asserts `sk.n == 512` on the fxp
+> path; n=1024 needs numerical re-validation of the per-level precision drop
+> in ffsampling.
 
 ## What's here
 
@@ -124,11 +125,13 @@ the NTT that is already in Falcon's stack. This:
   work via `bool ⊂ int`.
 - `use_fxp_ffsampling`: float reference (`False`) vs fxp pipeline
   (`True`). The fxp pipeline runs `_build_t_*_fxp` (NTT + `fft_fxp` +
-  `div_int` by q) → `ffsampling_fxp` (with samplerz_fxp at the leaves)
-  → `_reconstruct_s_fxp` (using `_B0_fft_fxp` cached on `sk`). **No
-  float on the per-signature critical path** (the only float→FxR
-  conversions, `sk.sigma` and `sk.sigmin`, are cached on `sk` after
-  the first signing).
+  ·1/q) → `ffsampling_fxp` (with samplerz_fxp at the leaves)
+  → `_ifft_round(z)` → `_reconstruct_s_int` (pure integer:
+  s = (c, 0) − z'·B0 mod± q via NTT — since t·B0 = (c, 0) exactly, the
+  signature needs no fixed-point at all). **No float on the
+  per-signature critical path** (the only float→FxR conversions,
+  `sk.sigma` and `sk.sigmin`, are cached on `sk` after the first
+  signing).
 
 ## Format choices for Falcon-512 at `p = 63`
 

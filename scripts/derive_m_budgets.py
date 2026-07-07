@@ -5,9 +5,7 @@ Derive-and-verify, NOT codegen: m_budgets.py stays hand-written (with its
 derivation comments); this script recomputes each PROVEN lower bound from
 (n, q, lambda, sigma, gamma_*, ...) and prints chosen vs derived + slack.
 `tests/test_m_budgets_derivation.py` asserts chosen >= derived for every
-PROVEN budget. M_S_INTER is EMPIRICAL (no clean worst-case chain: the
-Lemma-13 residual bound is ~2^26.6, far above the observed ~2^17.76; the
-runtime asserts in `_reconstruct_s_fxp` are its guard) and is only reported.
+budget.
 
 Usage: uv run python scripts/derive_m_budgets.py  [--gamma-root 12 ...]
 What-ifs: every threshold is a CLI flag, so e.g. the keygen-check trade
@@ -92,16 +90,13 @@ def derive(p: Params) -> dict:
     add("M_SIGN_DEFAULT", p.n / 2 + drift, False, "n/2 + drift", "Lemma 13 (tweak)")
     add("M_SIGN_STD", p.n * (p.q - 1) * p.gamma_FG / p.q + drift, False,
         "n*gamma_FG + drift", "Lemma 13 (std)")
+    # (No reconstruction budget: s = (c, 0) − z'·B0 is computed in pure
+    # integer arithmetic — see `sign_tweak._reconstruct_s_int`.)
     # samplerz.
     add("M_SZ_DIFF", 19.5, False, "|z_int - r| < 19.5", "lem:samplerz")
 
     d["_tau"], d["_A_child"], d["_drift"] = tau, a_child, drift
     return d
-
-
-# The one budget with no clean worst-case chain (see module docstring).
-EMPIRICAL = {"M_S_INTER": "each |diff*B| ~ 2^17.76 observed; guarded by "
-                          "runtime asserts in _reconstruct_s_fxp"}
 
 
 def main():
@@ -139,9 +134,6 @@ def main():
         slack = "" if chosen is None else f"{chosen - m_min:+d}"
         flag = "" if chosen is None or chosen >= m_min else "  <-- UNDER-PROVISIONED"
         print(f"{name:<18} {m_min:>7} {str(chosen):>7} {slack:>5}  {formula} ({source}){flag}")
-    for name, note in EMPIRICAL.items():
-        chosen = getattr(m_budgets, name, None) if m_budgets else None
-        print(f"{name:<18} {'emp.':>7} {str(chosen):>7} {'':>5}  {note}")
 
 
 if __name__ == "__main__":

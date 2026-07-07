@@ -38,7 +38,7 @@ def _norm_inf_fft(coeffs_fft) -> float:
 # Check 1 helper: ‖FFT(f, g)‖_∞ < γ_fg.
 # Branched into `ntru_gen` after `gs_norm` (cheapest pre-filter) and before
 # Check 2 (the more expensive α_hybrid). γ_fg = 255 is the strict bound
-# required by m_B_fg = 8 in `_reconstruct_s_fxp`.
+# behind M_B_FG = 8 (the fft(f), fft(g) row tags in `_build_B0_fft_fxp_cache`).
 # --------------------------------------------------------------------- #
 
 

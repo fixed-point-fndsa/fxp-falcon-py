@@ -19,8 +19,9 @@ Public API:
 
 `m_sign` is NOT a public parameter: its optimal value is fully determined
 by `use_tweak` (21 for STD, 18 for NTT) and chosen internally. Lower-level
-helpers (`ffsampling_fxp`, `_build_t_*_fxp`, `_reconstruct_s_fxp`) still
-take m_sign explicitly for benchmark callers.
+helpers (`ffsampling_fxp`, `_build_t_*_fxp`) still take m_sign explicitly
+for benchmark callers. The final s = (t − z)·B0 is reconstructed in pure
+integer arithmetic (`_reconstruct_s_int`) — fxp ends at `_ifft_round(z)`.
 
 `use_tweak` also accepts `bool` (False → STD, True → NTT), since `bool`
 subclasses `int`. The `falcon.py` `SecretKey` shim provides the stateful
@@ -39,11 +40,13 @@ from fft import ifft, sub_fft, add_fft, mul_fft  # noqa: E402
 from ffsampling import ffsampling_fft  # noqa: E402
 from common import q as FALCON_Q  # noqa: E402
 from encoding import compress  # noqa: E402
+from ntt import mul_zq  # noqa: E402
+from ntrugen import karamul  # noqa: E402  (exact Z[x]/(x^n+1) product, tweak t_int)
 
 # fxp side.
 from fxtypes import _bankers_shift, RootGram  # noqa: E402
 from fft_fxp import (  # noqa: E402
-    sub_fft_fxp, mul_fft_to, add_fft_fxp, adj_fft_fxp, ifft_fxp,
+    mul_fft_to, add_fft_fxp, adj_fft_fxp, ifft_fxp,
 )
 from ffldl_fxp import keygen_fxp  # noqa: E402
 from ffsampling_fxp import ffsampling_fxp  # noqa: E402
@@ -52,7 +55,7 @@ from fxp_constants_p63 import INV_SIGMA_FXR_BY_N as _PER_DEGREE_INV_SIGMA_FXR  #
 from target_construction import (  # noqa: E402
     _build_t_standard, _build_t_tweaked,
     _build_t_standard_fxp, _build_t_tweaked_fxp,
-    _build_B0_fft_fxp_cache,
+    _build_B0_fft_fxp_cache, _center_signed,
     USE_TWEAK_STD, USE_TWEAK_NTT,
 )
 
@@ -68,7 +71,7 @@ _FLOAT_BUILDERS = {
 # with their derivations). Imported here for the signing pipeline.
 from m_budgets import (  # noqa: E402
     M_D, M_G01,
-    M_SIGN_DEFAULT, M_SIGN_STD, M_B_FG, M_B_FG_UP, M_S_INTER,
+    M_SIGN_DEFAULT, M_SIGN_STD, M_B_FG, M_B_FG_UP,
 )
 
 
@@ -117,34 +120,54 @@ def _sigmin_fxp(sk):
     return _per_degree_fxp(sk, _PER_DEGREE_SIGMIN_FXR, "sigmin")
 
 
-def _reconstruct_s_fxp(sk, t_fxp, z_fxc, m_sign):
-    """Compute s = (t − z)·B in FxC, then ifft to integer polynomials.
+def _ifft_round(poly):
+    """fxp ifft then banker's-shift to nearest integer (pure int, no float).
+    Used on z (integer-valued by construction): the fxp FFT/merge round-off
+    ~2^{m_sign−p+ε} ≈ 2^-40 is far below the 0.5 recovery margin."""
+    return [_bankers_shift(v.x, v.p - v.m) if v.p > v.m else v.x
+            for v in ifft_fxp(poly)]
 
-    B0 rows arrive at their tight γ bounds from `_build_B0_fft_fxp_cache`.
-    M_S_INTER (= 19) is the common format for the `add` of the two products: it
-    holds each product (max |diff·B| ≈ 2^17.76 over the small LTYZ residual t−z),
-    not the smaller post-cancellation sum. Sized for Falcon-512 (asserted below).
+
+def _reconstruct_s_int(sk, point, z_int, qt=None):
+    """Reconstruct s = (t − z)·B0 in PURE INTEGER arithmetic — no fxp, no
+    budget. Since t·B0 = (c, 0) exactly and z is integer,
+
+        s = (c, 0) − z'·B0 = (c − z'0·g − z'1·G,  z'0·f + z'1·F)  mod± q,
+
+    with z' = z (standard target) or z' = z + t_int (tweak: z_std = z_tw +
+    t_int, Lemma 14). Everything is mod-q NTT (`mul_zq`) + centered lift: the
+    lift is exact iff ‖s‖_∞ < q/2, guaranteed by |s_i| ≤ τσ ≈ 2323 < q/2 =
+    6144 (s ~ D_{coset,σ}, lem:upper-dot-product; the 2^-λ failure would be a
+    ±q shift that explodes the ‖s‖² ≤ β² check → plain retry, never silent).
+
+    For the tweak, t_int = (q·t_std − qt)/q needs c·F, c·f OVER Z (mod q is
+    not enough for the exact /q): `karamul` here; two-prime NTT + CRT in C.
     """
-    assert sk.n == 512, f"_reconstruct_s_fxp: Falcon-512 only (sk.n={sk.n})"
-    [a_fxc, b_fxc], [c_fxc, d_fxc] = _build_B0_fft_fxp_cache(sk)  # tight γ bounds (cache)
+    q = FALCON_Q
+    z0, z1 = z_int
+    if qt is not None:  # tweak: z' = z + t_int, t_int = (±c·{F,f} − qt)/q
+        cF = karamul(list(point), sk.F)
+        cf = karamul(list(point), sk.f)
+        t_int0 = [_exact_div(-a - b, q) for a, b in zip(cF, qt[0])]
+        t_int1 = [_exact_div(a - b, q) for a, b in zip(cf, qt[1])]
+        z0 = [a + b for a, b in zip(z0, t_int0)]
+        z1 = [a + b for a, b in zip(z1, t_int1)]
+    z0_zq = [c % q for c in z0]
+    z1_zq = [c % q for c in z1]
+    u0 = mul_zq(z0_zq, [c % q for c in sk.g])
+    u1 = mul_zq(z1_zq, [c % q for c in sk.G])
+    v0 = mul_zq(z0_zq, [c % q for c in sk.f])
+    v1 = mul_zq(z1_zq, [c % q for c in sk.F])
+    s0 = _center_signed([(c - a - b) % q for c, a, b in zip(point, u0, u1)], q)
+    s1 = _center_signed([(a + b) % q for a, b in zip(v0, v1)], q)
+    return s0, s1
 
-    diff0 = sub_fft_fxp(t_fxp[0], z_fxc[0])
-    diff1 = sub_fft_fxp(t_fxp[1], z_fxc[1])
 
-    # s_j = diff0·B[0][j] + diff1·B[1][j]. `mul_fft_to` emits each product
-    # straight at the common M_S_INTER (single round), so the two summands
-    # share m for the add — no separate product→M_S_INTER retag.
-    s0_fxc = add_fft_fxp(mul_fft_to(diff0, a_fxc, M_S_INTER),
-                         mul_fft_to(diff1, c_fxc, M_S_INTER))
-    s1_fxc = add_fft_fxp(mul_fft_to(diff0, b_fxc, M_S_INTER),
-                         mul_fft_to(diff1, d_fxc, M_S_INTER))
-
-    # ifft then banker's-shift to nearest integer (pure int, no float).
-    def _ifft_round(poly):
-        return [_bankers_shift(v.x, v.p - v.m) if v.p > v.m else v.x
-                for v in ifft_fxp(poly)]
-    return (_ifft_round(s0_fxc), _ifft_round(s1_fxc),
-            _ifft_round(z_fxc[0]), _ifft_round(z_fxc[1]))
+def _exact_div(a: int, d: int) -> int:
+    """a // d, asserting the division is exact."""
+    quo, rem = divmod(a, d)
+    assert rem == 0, f"_exact_div: {a} not divisible by {d}"
+    return quo
 
 
 def _build_fxp_tree_cache(sk):
@@ -197,8 +220,8 @@ def sample_preimage(sk: SecretKey, point: list[int], use_tweak: int = USE_TWEAK_
     if use_fxp_ffsampling:
         # Self-consistent fxp pipeline: t built directly in fxp (no float64
         # detour), so std vs tw KAT is bit-identical (vs ~1/1000 in float).
-        # The whole fxp pipeline is currently tuned for Falcon-512 (m_D=18,
-        # M_L10_ROOT=5, m_B_{fg,FG} in _reconstruct_s_fxp); n=1024 needs a
+        # The whole fxp pipeline is currently tuned for Falcon-512 (M_D=18,
+        # M_L10_ROOT=5, M_B_FG/M_B_FG_UP row tags); n=1024 needs a
         # numerical re-validation of every per-level precision bound.
         assert sk.n == 512, f"fxp ffsampling: Falcon-512 only (sk.n={sk.n})"
         # m_sign is the FxC `m` for t throughout ffsampling — optimal value
@@ -209,7 +232,11 @@ def sample_preimage(sk: SecretKey, point: list[int], use_tweak: int = USE_TWEAK_
         t_fxp, q_t_frac_coef = builder(sk, point, m_sign)
         tree_fxp = _build_fxp_tree_cache(sk)
         z_fxc = ffsampling_fxp(t_fxp, tree_fxp, randombytes, m_sign=m_sign)
-        s0, s1, z0_coef, z1_coef = _reconstruct_s_fxp(sk, t_fxp, z_fxc, m_sign)
+        # z back to integers (the last fxp step), then s in pure integer
+        # arithmetic — s = (c, 0) − z'·B0 mod± q (see _reconstruct_s_int).
+        z0_coef, z1_coef = _ifft_round(z_fxc[0]), _ifft_round(z_fxc[1])
+        s0, s1 = _reconstruct_s_int(sk, point, (z0_coef, z1_coef),
+                                    qt=q_t_frac_coef)
         t_fft = [[z.to_complex() for z in t_fxp[0]],
                  [z.to_complex() for z in t_fxp[1]]]
     else:

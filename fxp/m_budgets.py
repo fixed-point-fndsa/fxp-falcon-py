@@ -49,13 +49,19 @@ M_NORM_OUT = 0
 # Hashed point: |point|_∞ < q < 2^14.
 M_POINT_COEF = 14
 # Std target: c/q computed in COEFFICIENT domain, c_i/q ≤ (q−1)/q < 1, loaded
-# at m = 1 (NOT 0). The full spare bit makes the FFT's +1/level drift
-# ℓ¹-PROVABLE for this input: partial transforms ≤ 2^k·max < 2^{k+1} for any
-# phase alignment — needed because c/q is dense POSITIVE (unlike the zero-mean
-# f, g, F, G, qt), so its partial sums genuinely approach the ℓ¹ bound
-# (m = 0 overflows in practice). Dividing by q before the FFT keeps the std
-# chain small (fft(c/q) at m=9, products ≤ 2^21); the former (ĉ·d̂)·INV_Q
-# route peaked at a transient m=34, and its c@14 FFT tag was only heuristic.
+# at m = 1 (NOT 0). Why the spare bit: the fft_fxp contract is m_out = m_in +
+# log₂(n) − 1, one bit TIGHTER than the ℓ¹ worst case n·max = 2^{m_in+log₂n}.
+# Zero-mean inputs (f, g, F, G, qt) never feel the missing bit (FFT values
+# concentrate at √n scale, and the γ checks certify their outputs); c/q is
+# dense POSITIVE (mean ≈ 1/2, no sign cancellation), so its low-frequency
+# embeddings genuinely reach 2n/π·max ≈ 326·max > 2^8·max — at m = 0 the FFT
+# overflows on legal hash points (observed). Loading at m = 1 restores
+# |values| < 2^{m−1}, so every level-k partial transform obeys ℓ¹ ≤ 2^k·max <
+# 2^{k+m−1} = the tag bound — pure triangle inequality, no assumptions. Cost:
+# 1 bit of load ULP, invisible after the m_sign emit. Dividing by q before the
+# FFT keeps the std chain small (fft(c/q) at m=9, products ≤ 2^21); the former
+# (ĉ·d̂)·INV_Q route peaked at a transient m=34, and its c@14 tag relied on the
+# same zero-mean heuristic that c/q violates.
 M_CQ_COEF = 1
 # B0 = [[g,−f],[G,−F]] coefficient-domain loads (before fft_fxp) — NOT the
 # FFT-domain γ bounds (M_B_FG / M_B_FG_UP below). Integers embed exactly at
@@ -79,12 +85,14 @@ M_SIGN_DEFAULT = 18
 #   std path: point ∈ [0,q) ⇒ ‖t̂_root‖_∞ < n·γ_FG ≈ 2^20.77 + drift ≈ 2^20.93 ⇒ 21.
 M_SIGN_STD = 21
 
-# s = (t − z)·B reconstruction (see _reconstruct_s_fxp). Retag B0 rows tightly:
+# B0 rows in FFT domain, retagged tightly for the Gram and the std target:
 M_B_FG = 8       # a, b = fft(g), fft(−f) — γ_fg = 255 < 2^8 (Check 1b)
 M_B_FG_UP = 12   # c, d = fft(G), fft(−F) — γ_FG = 3500 < 2^12 (Check 3)
-# Common format for the two products before their sum: must hold each product
-# individually (max |diff·B| ≈ 2^17.76), not the smaller post-cancellation sum.
-M_S_INTER = 19
+# The final s = (t − z)·B0 needs NO fxp budget: since t·B0 = (c, 0) exactly
+# and z is integer, s = (c, 0) − z'·B0 is reconstructed in pure integer
+# arithmetic mod± q (`_reconstruct_s_int`; exact lift since |s_i| ≤ τσ ≈
+# 2323 < q/2). The former fxp reconstruction budget M_S_INTER — 19 empirical
+# (overflowed 2026-07-05), then 23 proven — was removed with it (2026-07-07).
 
 # --------------------------------------------------------------------- #
 # samplerz (see samplerz_fxp).

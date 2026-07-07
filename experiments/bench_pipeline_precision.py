@@ -10,7 +10,7 @@ error of every stage against a 256-bit mpmath reference:
                                                        │  L_10 / D_ii / σ_i
     point (hashed) ──fxp──▶ _build_t_standard_fxp ─────┤
                                   └──▶ ffsampling_fxp + samplerz_fxp ──▶
-                                            _reconstruct_s_fxp ──▶ s
+                                _ifft_round(z) ──▶ _reconstruct_s_int ──▶ s
 
 So it reveals the precision the *implementation* actually attains end to end —
 which the kernel benchmarks, fed idealised Grams, do not.
@@ -58,7 +58,7 @@ from target_construction import (  # noqa: E402
 )
 from sign_tweak import (  # noqa: E402
     _gram_fft_fxp, _inv_sigma_fxp, _sigmin_fxp, _build_fxp_tree_cache,
-    _reconstruct_s_fxp,
+    _ifft_round, _reconstruct_s_int,
 )
 
 Q = 12289
@@ -166,7 +166,8 @@ def measure_key(sk, key_idx, m_sign=21):
     # ---- Stage 5: signature s = (t − z)·B0 (real production sampling) ----
     tree_fxp = _build_fxp_tree_cache(sk)
     z_fxc = ffsampling_fxp(t_fxp, tree_fxp, _rng(key_idx), m_sign=m_sign)
-    s0, s1, z0, z1 = _reconstruct_s_fxp(sk, t_fxp, z_fxc, m_sign)
+    z0, z1 = _ifft_round(z_fxc[0]), _ifft_round(z_fxc[1])
+    s0, s1 = _reconstruct_s_int(sk, point, (z0, z1))
     z0f, z1f = _mp_fft(z0), _mp_fft(z1)
     diff0 = [t0_ref[i] - z0f[i] for i in range(n)]
     diff1 = [t1_ref[i] - z1f[i] for i in range(n)]
