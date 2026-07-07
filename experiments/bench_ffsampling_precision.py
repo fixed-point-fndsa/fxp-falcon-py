@@ -225,9 +225,9 @@ def build_t_at_all_precisions(sk, c, p_fxp_list, m_sign):
         inv_q = _INVQ[p].re  # p-precise generated 1/q (m=-13), as in production
         cq_fft = fft_fxp([FxR.from_int(int(ci), m=M_POINT_COEF, p=p) * inv_q
                           for ci in c])  # lands at M_CQ_COEF = 1
-        # Coefficient loads at the tight per-row bounds (M_B0_COEF_FG_UP=7 for
-        # F, M_B0_COEF_FG=5 for f), then retag fft(F), fft(f) to their tight γ
-        # bounds BEFORE the products — matches the deployed
+        # Coefficient loads at the per-row FFT-load tags (M_B0_COEF_FG_UP=8
+        # for F, M_B0_COEF_FG=5 for f — √2 rule), then retag fft(F), fft(f) to
+        # their tight γ bounds BEFORE the products — matches the deployed
         # `_build_t_standard_fxp` (M_B_FG_UP=γ_FG for F, M_B_FG=γ_fg for f).
         F_fxc = retag_poly_fxc(
             fft_fxp([FxR.from_int(int(F_i), m=M_B0_COEF_FG_UP, p=p) for F_i in sk.F]), M_B_FG_UP)

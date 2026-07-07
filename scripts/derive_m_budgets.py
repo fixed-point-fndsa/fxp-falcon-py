@@ -46,6 +46,18 @@ def _m_min(bound: float, attainable: bool) -> int:
     return math.ceil(math.log2(bound))
 
 
+def _m_fft_load(max_coef: float) -> int:
+    """Smallest load tag m_in for a poly fed to fft_fxp: the FFT-load rule
+    max ≤ 2^{m_in}/√2, i.e. m_in = ceil(log2(√2·max)).
+
+    Why: fft_fxp's tag at sub-size N is m_in + log2(N) − 1 = (N/2)·2^{m_in},
+    while the worst-case partial-transform modulus is G(N)·max with
+    G(2) = √2 (Pythagorean base case) and G(2N) ≤ 2·G(N) ⇒ G(N) ≤ N/√2.
+    Covers every level by Pythagoras + triangle alone (17 → 5, 127 → 8,
+    q/2 → 14, c/q < 1 → 1)."""
+    return math.ceil(math.log2(math.sqrt(2) * max_coef))
+
+
 def derive(p: Params) -> dict:
     """Derived minimal m per PROVEN budget.
 
@@ -67,12 +79,16 @@ def derive(p: Params) -> dict:
     def add(name, bound, attainable, formula, source):
         d[name] = (_m_min(bound, attainable), formula, source)
 
-    # Coefficient-domain loads (integer values: bounds are attainable).
-    add("M_B0_COEF_FG", p.cdt_kmax, True, "|f,g coefs| <= CDT kmax", "gauss table (c-fn-dsa)")
-    add("M_B0_COEF_FG_UP", p.fg_coef_limit, True, "||F,G||_inf <= 127", "int8 encoding filter")
-    add("M_QT_COEF", (p.q - 1) / 2, True, "|qt| <= (q-1)/2", "mod+- q centering")
+    # FFT loads (coefficient polys fed to fft_fxp): the √2 FFT-load rule.
+    def add_fft_load(name, max_coef, formula, source):
+        d[name] = (_m_fft_load(max_coef), formula, source)
+
+    add_fft_load("M_B0_COEF_FG", p.cdt_kmax, "sqrt2*kmax <= 2^m (FFT load)", "gauss table (c-fn-dsa)")
+    add_fft_load("M_B0_COEF_FG_UP", p.fg_coef_limit, "sqrt2*127 <= 2^m (FFT load)", "int8 encoding filter")
+    add_fft_load("M_QT_COEF", (p.q - 1) / 2, "sqrt2*q/2 <= 2^m (FFT load)", "mod+- q centering")
+    add_fft_load("M_CQ_COEF", 1, "sqrt2*(c/q) <= 2^m (FFT load)", "coefficient-domain /q")
+    # Coefficient-domain values NOT fed to an FFT (plain attainable bounds).
     add("M_POINT_COEF", p.q - 1, True, "point in [0, q)", "hash_to_point")
-    add("M_CQ_COEF", 1, False, "c/q <= (q-1)/q < 1", "coefficient-domain /q")
     # FFT-domain B0 rows (check thresholds: strict sups).
     add("M_B_FG", p.gamma_fg, False, "||fft(f,g)|| < gamma_fg", "Check 1b")
     add("M_B_FG_UP", p.gamma_FG, True, "||fft(F,G)|| <= gamma_FG", "Check 3")

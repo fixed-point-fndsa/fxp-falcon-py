@@ -31,9 +31,9 @@ USE_TWEAK_NTT = 1          # Section-5.1 NTT-exact tweak
 
 
 # Coefficient-domain m for fxp inputs (M_CQ_COEF, M_B0_COEF_FG[_UP],
-# M_QT_COEF; see m_budgets.py): fft_fxp widens by log₂n − 1 = 8 (n=512), so
-# FFT-domain polys land at m_in + 8 — fft(c/q) at 9, B0 rows at 13 (f,g) /
-# 15 (F,G), qt at 21.
+# M_QT_COEF; all obey the √2 FFT-load rule — see m_budgets.py): fft_fxp
+# widens by log₂n − 1 = 8 (n=512), so FFT-domain polys land at m_in + 8 —
+# fft(c/q) at 9, B0 rows at 13 (f,g) / 16 (F,G), qt at 22.
 
 
 def _center_signed(poly, modulus):
@@ -158,7 +158,7 @@ def _build_t_tweaked_fxp(sk, point, m_sign):
     Returns (t_fxc_pair, [qt0, qt1]).
     """
     qt0, qt1 = _build_qt(sk, point)
-    # |qt| < q/2 < 2^13; FFT widens to m=21 (n=512); fused ·INV_Q → m_sign.
+    # |qt| ≤ q/2, loaded at 14 (√2 rule); FFT → m=22; fused ·INV_Q → m_sign.
     t0 = [z.mul_to(INV_Q_FXC, m_sign) for z in _fft_int_poly_fxp(qt0, M_QT_COEF)]
     t1 = [z.mul_to(INV_Q_FXC, m_sign) for z in _fft_int_poly_fxp(qt1, M_QT_COEF)]
     return [t0, t1], [qt0, qt1]
