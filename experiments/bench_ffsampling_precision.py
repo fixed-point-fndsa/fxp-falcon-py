@@ -50,13 +50,13 @@ from samplerz import samplerz as samplerz_ref  # noqa: E402
 
 from fxtypes import FxR, FxC  # noqa: E402
 from fft_fxp import (  # noqa: E402
-    add_fft_fxp, sub_fft_fxp, mul_fft_fxp, split_complex_fxp, merge_fft_fxp,
+    add_fft_fxp, sub_fft_fxp, mul_fft_to, split_complex_fxp, merge_fft_fxp,
     fft_fxp, retag_poly_fxc,
 )
 from ffldl_fxp import keygen_fxp  # noqa: E402
 from sign_tweak import _gram_fft_fxp  # noqa: E402  (deployed Gram, retag-before-mul)
 from m_budgets import (  # noqa: E402
-    M_B_FG, M_B_FG_UP, M_B0_COEF_FG, M_B0_COEF_FG_UP, M_CQ_COEF,
+    M_B_FG, M_B_FG_UP, M_B0_COEF_FG, M_B0_COEF_FG_UP, M_CQ_COEF, M_POINT_COEF,
 )
 # p-precise generated constants (NOT from_float — a float64 1/q or 1/σ caps the
 # target / σ_i at ~2^-53 regardless of p, which would hide fxp-127's headroom).
@@ -71,11 +71,6 @@ from ntrugen_filters import (  # noqa: E402
     GAMMA_FG_512, GAMMA_HYBRID, GAMMA_ROOT,
     norm_fft_fg, alpha_hybrid_squared, norm_fft_k,
 )
-
-# `_renormalize_poly` was renamed to `retag_poly_fxc` and moved to fft_fxp;
-# alias kept here so the experiment reads as before.
-_renormalize_poly = retag_poly_fxc
-
 
 def _filtered_sk(n):
     """A SecretKey whose basis passes the FULL NTRUGen filter — γ_fg
@@ -248,16 +243,13 @@ def build_t_at_all_precisions(sk, c, p_fxp_list, m_sign):
     # ----- Self-consistent FxP at each p: c/q in COEFFICIENT domain at
     # M_CQ_COEF=1, fft at small tags, fused mul_fft_to to m_sign. Mirrors
     # `target_construction._build_t_standard_fxp` but parametric on p. -----
-    # |c_i| < q < 2^14 (point is unsigned hash output in [0, q-1]).
-    M_POINT_COEF = 14
-    from fft_fxp import mul_fft_to  # local: bench-only dep
     t_fxps = {}
     for p in p_fxp_list:
         inv_q = _INVQ[p].re  # p-precise generated 1/q (m=-13), as in production
         cq_fft = fft_fxp([FxR.from_int(int(ci), m=M_POINT_COEF, p=p) * inv_q
                           for ci in c])  # lands at M_CQ_COEF = 1
         # Coefficient loads at the tight per-row bounds (M_B0_COEF_FG_UP=7 for
-        # F, M_B0_COEF_FG=8 for f), then retag fft(F), fft(f) to their tight γ
+        # F, M_B0_COEF_FG=5 for f), then retag fft(F), fft(f) to their tight γ
         # bounds BEFORE the products — matches the deployed
         # `_build_t_standard_fxp` (M_B_FG_UP=γ_FG for F, M_B_FG=γ_fg for f).
         F_fxc = retag_poly_fxc(
@@ -344,7 +336,7 @@ def _walker(t_fp, t_fxp, t_mp, tree_fp, tree_fxp, tree_mp,
 
     # Right recursion on t[1].
     t1_split_fp = _split_float(t_fp[1])
-    t1_split_fxp = [_renormalize_poly(p_, m_sign) for p_ in split_complex_fxp(t_fxp[1])]
+    t1_split_fxp = list(split_complex_fxp(t_fxp[1]))  # split preserves m_sign
     t1_split_mp = list(_mp_split_fft(t_mp[1]))
 
     z_fp_right, z_fxp_right, z_mp_right = _walker(
@@ -355,7 +347,7 @@ def _walker(t_fp, t_fxp, t_mp, tree_fp, tree_fxp, tree_mp,
     )
 
     z1_fp = _merge_float(z_fp_right)
-    z1_fxp = _renormalize_poly(merge_fft_fxp(z_fxp_right), m_sign)
+    z1_fxp = retag_poly_fxc(merge_fft_fxp(z_fxp_right), m_sign)
     z1_mp = _mp_merge_fft(*z_mp_right)
 
     # t_0' = t_0 + (t_1 - z_1) * ell.
@@ -364,7 +356,7 @@ def _walker(t_fp, t_fxp, t_mp, tree_fp, tree_fxp, tree_mp,
     t0p_fp = [t_fp[0][i] + prod_fp[i] for i in range(n)]
 
     diff_fxp = sub_fft_fxp(t_fxp[1], z1_fxp)
-    prod_fxp = _renormalize_poly(mul_fft_fxp(diff_fxp, ell_fxp), m_sign)
+    prod_fxp = mul_fft_to(diff_fxp, ell_fxp, m_sign)  # fused, as deployed
     t0p_fxp = add_fft_fxp(t_fxp[0], prod_fxp)
 
     diff_mp = [t_mp[1][i] - z1_mp[i] for i in range(n)]
@@ -393,7 +385,7 @@ def _walker(t_fp, t_fxp, t_mp, tree_fp, tree_fxp, tree_mp,
 
     # Left recursion on t0'.
     t0p_split_fp = _split_float(t0p_fp)
-    t0p_split_fxp = [_renormalize_poly(p_, m_sign) for p_ in split_complex_fxp(t0p_fxp)]
+    t0p_split_fxp = list(split_complex_fxp(t0p_fxp))  # split preserves m_sign
     t0p_split_mp = list(_mp_split_fft(t0p_mp))
 
     z_fp_left, z_fxp_left, z_mp_left = _walker(
@@ -404,7 +396,7 @@ def _walker(t_fp, t_fxp, t_mp, tree_fp, tree_fxp, tree_mp,
     )
 
     z0_fp = _merge_float(z_fp_left)
-    z0_fxp = _renormalize_poly(merge_fft_fxp(z_fxp_left), m_sign)
+    z0_fxp = retag_poly_fxc(merge_fft_fxp(z_fxp_left), m_sign)
     z0_mp = _mp_merge_fft(*z_mp_left)
 
     return [z0_fp, z1_fp], [z0_fxp, z1_fxp], [z0_mp, z1_mp]
@@ -456,8 +448,7 @@ def _stats(vals):
 def main(n_trials=1000):
     n = 512
     # Standard target: ‖t̂‖_∞ ≤ n·γ_FG ≈ 2^20.93 worst-case, so m_sign = 21
-    # (see fxp/sign_tweak.py:_reconstruct_s_fxp). With the
-    # tweak this would be 18.
+    # (M_SIGN_STD in m_budgets). With the tweak this would be 18.
     m_sign = 21
     random.seed(2026)
     print(f"Generating Falcon-{n} keypair (full NTRUGen filter)...")

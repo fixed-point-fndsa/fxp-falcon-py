@@ -126,14 +126,6 @@ def _round_and_frac(a: FxR) -> tuple[int, FxR]:
     return _split(a, _round_value(a))
 
 
-def _scale_to_p(a: FxR) -> int:
-    """int(a.value · 2^p). At m=0 this is a.x; otherwise shift by ±m."""
-    assert a.p == _P
-    if a.m == 0:
-        return a.x
-    return a.x >> (-a.m) if a.m < 0 else a.x << a.m
-
-
 # --------------------------------------------------------------------- #
 # basesampler — identical to reference (pure 72-bit integer arithmetic).
 # --------------------------------------------------------------------- #
@@ -165,11 +157,14 @@ def basesampler(randombytes: Callable[[int], bytes] = urandom,
 def approxexp_fxp(x: FxR, ccs: FxR) -> int:
     """2^63 · ccs · exp(-x) as a non-negative 64-bit integer.
 
-    Pre: x.p = ccs.p = 63, x.value ∈ [0, ln 2], ccs.value ∈ (0, 1]. Same
-    13-coef polynomial and truncating >>63 shifts as the reference.
+    Pre: x.p = ccs.p = 63 and m = 0 for both (x.value ∈ [0, ln 2] after
+    berexp's retag; ccs.value ∈ (0, 1] at M_NORM_OUT), so the mantissas ARE
+    the 2^63-scaled integers. Same 13-coef polynomial and truncating >>63
+    shifts as the reference.
     """
     assert x.p == _P and ccs.p == _P
-    z_x, z_ccs = _scale_to_p(x), _scale_to_p(ccs)
+    assert x.m == 0 and ccs.m == 0, f"approxexp_fxp: m=({x.m},{ccs.m}), want (0,0)"
+    z_x, z_ccs = x.x, ccs.x
     y = _C[0]
     for elt in _C[1:]:
         y = elt - ((z_x * y) >> 63)

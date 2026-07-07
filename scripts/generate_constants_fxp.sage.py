@@ -15,9 +15,9 @@ of consumers for the rationale):
   - INV_SQRT_Q_FXR                1/√q anchor for the Newton-Raphson seed
                                   in `rsqrt`. m=-6 (natural bound on the
                                   rsqrt output range).
-  - INV_Q_FXC                     1/q as FxC, used as a multiplicand in
-                                  `target_construction._div_by_q_fxc`.
-                                  m=-13 (|1/q| ≈ 2^-13.586 < 2^-13).
+  - INV_Q_FXC                     1/q as FxC, the ·INV_Q multiplicand in
+                                  `target_construction` (both target
+                                  builders). m=-13 (|1/q| ≈ 2^-13.586 < 2^-13).
   - SIGMA_FXR_BY_N                Per-degree gaussian standard deviation
                                   σ_n from the Falcon NIST spec (cf.
                                   `falcon.Params[n]['sigma']`). m=8.

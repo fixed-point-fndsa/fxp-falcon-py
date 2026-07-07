@@ -158,11 +158,10 @@ def _build_fxp_tree_cache(sk):
     if sk._fxp_tree is not None:
         return sk._fxp_tree
 
-    # Gram in FFT domain (B0·adj(B0^T)): `_gram_fft_fxp` already emits g00 at
-    # M_D (shared recursion budget, root D00 = G00 without a widen) and g10 at
-    # M_G01, so we assert the contract instead of retagging.
+    # Gram in FFT domain (B0·adj(B0^T)): `_gram_fft_fxp` emits g00 at M_D and
+    # g10 at M_G01 by construction; `ldl_fft_fxp_ntru_root` asserts the g00
+    # contract downstream.
     gram = _gram_fft_fxp(_build_B0_fft_fxp_cache(sk))
-    assert gram.g00[0].m == M_D and gram.g10[0].m == M_G01
 
     tree = keygen_fxp(gram, q=FALCON_Q, inv_sigma=_inv_sigma_fxp(sk),
                       sigmin=_sigmin_fxp(sk))
@@ -203,13 +202,8 @@ def sample_preimage(sk: SecretKey, point: list[int], use_tweak: int = USE_TWEAK_
         # numerical re-validation of every per-level precision bound.
         assert sk.n == 512, f"fxp ffsampling: Falcon-512 only (sk.n={sk.n})"
         # m_sign is the FxC `m` for t throughout ffsampling — optimal value
-        # is fully determined by use_tweak:
-        #   STD : `point` ∈ [0, q-1] ⇒ ‖t̂_root‖_∞ < n·γ_FG = 512·3500 ≈ 2^20.77
-        #         (γ_FG tightened from 4096; see ntrugen_filters.py). Lemma 13
-        #         drift adds 2·A_child·√n·(γ_root+√2+1) ≈ 2^17.6 (Cholesky
-        #         A_child = 2τσ·α_h/√q ≈ 168). Sum ≈ 2^20.93 < 2^21 ⇒ 21.
-        #   tweak: q·t_frac = (−c·F, c·f) mod^± q centered ⇒ ‖t̂_root‖_∞ < n/2 = 2^8.
-        #         drift dominates ⇒ 18 (cf. ffsampling_fxp.M_SIGN_DEFAULT).
+        # is fully determined by use_tweak (derivations in m_budgets.py:
+        # M_SIGN_STD = 21, M_SIGN_DEFAULT = 18).
         m_sign = M_SIGN_STD if use_tweak == USE_TWEAK_STD else M_SIGN_DEFAULT
         builder = _build_t_tweaked_fxp if use_tweak != USE_TWEAK_STD else _build_t_standard_fxp
         t_fxp, q_t_frac_coef = builder(sk, point, m_sign)

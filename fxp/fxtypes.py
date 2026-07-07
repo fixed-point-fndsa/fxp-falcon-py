@@ -13,7 +13,7 @@ per value; the scale is 2^{m-p} and can be of either sign.
 Addition and subtraction keep the operands' (m, p) exactly. Multiplication
 widens m to m_a + m_b and preserves p via a round-to-nearest-even shift.
 Division is not a primitive here: the pipeline divides via the Newton-Raphson
-reciprocal `fft_fxp.nr_reciprocal` (it needs the 1/q seed constant).
+reciprocal `nr_fxp.nr_reciprocal` (it needs the 1/q seed constant).
 Invariants (0 < p, m <= p, |x| < 2^p) are enforced via assertions.
 
 FxC uses the **complex-modulus** convention: `m` bounds `|z|` (the modulus),
@@ -188,29 +188,14 @@ class FxC:
         return FxC(re=self.re - other.re, im=self.im - other.im)
 
     def __mul__(self, other: FxC) -> FxC:
-        """Complex multiplication: (a+ib)(c+id) = (ac-bd) + i(ad+bc).
+        """Complex multiplication: (a+ib)(c+id) = (ac-bd) + i(ad+bc), at the
+        tight output bound m_1 + m_2 (|z_1 z_2| = |z_1| |z_2| < 2^{m_1+m_2}).
 
-        Under the complex-modulus convention (|z| < 2^m): output m =
-        m_1 + m_2, because |z_1 z_2| = |z_1| |z_2| < 2^{m_1 + m_2}.
-        Each component is computed via one banker's shift by p bits on
-        the exact integer expression. Rounding error at most 2^{m_1+m_2-p-1}
-        per component.
-
-        The |x_out| < 2^p invariant holds for the EXACT product by Lagrange:
-        (ac - bd)^2 + (ad + bc)^2 = (a^2 + b^2)(c^2 + d^2). The banker's
-        shift then adds up to half an ULP per component, so an input within
-        ~2^-p (relative) of the modulus bound 2^{m1+m2} can round a
-        component exactly to 2^p and trip the __post_init__ assert (loud,
-        not silent). Pipeline values keep multi-bit modulus margins.
+        Delegates to `mul_to` at m_out = m_1 + m_2 (the shift is then exactly
+        p bits): one banker's shift per component on the exact integer
+        expression, rounding error at most 2^{m_1+m_2-p-1} per component.
         """
-        assert self.p == other.p, f"FxC *: p {self.p} != {other.p}"
-        p = self.p
-        x_a, x_b = self.re.x, self.im.x
-        x_c, x_d = other.re.x, other.im.x
-        m_out = self.m + other.m
-        x_re = _bankers_shift(x_a * x_c - x_b * x_d, p)
-        x_im = _bankers_shift(x_a * x_d + x_b * x_c, p)
-        return FxC(re=FxR(x=x_re, m=m_out, p=p), im=FxR(x=x_im, m=m_out, p=p))
+        return self.mul_to(other, self.m + other.m)
 
     def mul_to(self, other: FxC, m_out: int) -> FxC:
         """Complex multiply emitting directly at the caller-chosen budget m_out,
@@ -220,8 +205,15 @@ class FxC:
         integer product is shifted straight to m_out (one banker's shift),
         instead of rounding at p to the natural m_self+m_other and then
         re-rounding to m_out. Dropping the intermediate round makes it slightly
-        more accurate — so it is NOT bit-identical to the two-step form. The
-        |x| < 2^p invariant is checked by FxR's __post_init__ (loud on overflow).
+        more accurate — so it is NOT bit-identical to the two-step form.
+
+        The |x| < 2^p invariant is checked by FxR's __post_init__ (loud on
+        overflow). At m_out = m_1 + m_2 it holds for the EXACT product by
+        Lagrange: (ac - bd)² + (ad + bc)² = (a² + b²)(c² + d²); the banker's
+        shift then adds up to half an ULP per component, so an input within
+        ~2^-p (relative) of the modulus bound 2^{m1+m2} can round a component
+        exactly to 2^p and trip the assert (loud, not silent). Pipeline
+        values keep multi-bit modulus margins.
         """
         assert self.p == other.p, f"FxC.mul_to: p {self.p} != {other.p}"
         p = self.p

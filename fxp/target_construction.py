@@ -15,21 +15,13 @@ from fft import fft  # noqa: E402
 from ntt import mul_zq  # noqa: E402
 from common import q as FALCON_Q  # noqa: E402
 
-from fxtypes import FxR, FxC, retag_fxc  # noqa: E402
+from fxtypes import FxR  # noqa: E402
 from fft_fxp import fft_fxp, retag_poly_fxc, mul_fft_to  # noqa: E402
 from fxp_constants_p63 import INV_Q_FXC  # noqa: E402  (m=-13, |1/q| ≈ 2^-13.586 < 2^-13)
 from m_budgets import (  # noqa: E402
     M_POINT_COEF, M_CQ_COEF, M_B0_COEF_FG, M_B0_COEF_FG_UP, M_QT_COEF,
     M_B_FG, M_B_FG_UP,
 )
-
-
-def _div_by_q_fxc(z: FxC, m_out: int) -> FxC:
-    """z / q at (m_out, 63). `z * INV_Q_FXC` lands at m = z.m − 13; the
-    value-preserving retag aligns to m_out. Bit-output differs from an
-    exact `/ q` by at most 2^-34 absolute (well below the samplerz
-    boundary sensitivity ~2^-15)."""
-    return retag_fxc(z * INV_Q_FXC, m_out)
 
 
 # Tweak variant labels (single source of truth). Passed as `use_tweak` to
@@ -102,25 +94,29 @@ def _build_t_tweaked(sk, point):
 # --------------------------------------------------------------------- #
 
 
-def _build_B0_fft_fxp_cache(sk, p=63):
-    """Lazily build & cache the fxp FFT of B0 = [[g, −f], [G, −F]] on sk.
+def _b0_fft_fxp(sk, p=63):
+    """fxp FFT of B0 = [[g, −f], [G, −F]] at precision p (pure, uncached).
 
     Rows load at their tight coefficient bounds (M_B0_COEF_FG / _FG_UP,
     derivations in m_budgets) — FFT-internal roundings scale with the
     running tag, so tight loads buy ~5–8 bits per row. Each row is then
     retagged once (exact left-shift) to its FFT-domain γ bound (M_B_FG /
-    M_B_FG_UP), so every consumer sees the tight m. Run once per key.
+    M_B_FG_UP), so every consumer sees the tight m.
     """
-    if sk._B0_fft_fxp is not None:
-        return sk._B0_fft_fxp
     a, b = (fft_fxp([FxR.from_int(co, m=M_B0_COEF_FG, p=p) for co in poly])
             for poly in (sk.g, [-c for c in sk.f]))
     c, d = (fft_fxp([FxR.from_int(co, m=M_B0_COEF_FG_UP, p=p) for co in poly])
             for poly in (sk.G, [-c for c in sk.F]))
-    sk._B0_fft_fxp = [
+    return [
         [retag_poly_fxc(a, M_B_FG), retag_poly_fxc(b, M_B_FG)],        # fft(g), fft(−f) — γ_fg
         [retag_poly_fxc(c, M_B_FG_UP), retag_poly_fxc(d, M_B_FG_UP)],  # fft(G), fft(−F) — γ_FG
     ]
+
+
+def _build_B0_fft_fxp_cache(sk, p=63):
+    """Lazily build & cache `_b0_fft_fxp(sk, p)` on sk (once per key)."""
+    if sk._B0_fft_fxp is None:
+        sk._B0_fft_fxp = _b0_fft_fxp(sk, p)
     return sk._B0_fft_fxp
 
 
@@ -156,11 +152,13 @@ def _build_t_tweaked_fxp(sk, point, m_sign):
     """Section-5.1 target in fxp: NTT-exact qt then fft_fxp + ·INV_Q.
 
     fxp counterpart of `_build_t_tweaked`. qt is exact in Z/qZ; the only
-    rounding is the banker's-shift in fft_fxp + ·INV_Q + retag. Output at
-    (m_sign, 63). Returns (t_fxc_pair, [qt0, qt1]).
+    roundings are the banker's-shifts in fft_fxp plus ONE per coefficient in
+    the fused ·INV_Q emit (`mul_to` straight at m_sign, ULP 2^{m_sign−63} —
+    the former ·INV_Q-then-retag pair rounded twice). Output at (m_sign, 63).
+    Returns (t_fxc_pair, [qt0, qt1]).
     """
     qt0, qt1 = _build_qt(sk, point)
-    # |qt| < q/2 < 2^13; FFT widens to m=21 (n=512); mul·INV_Q gives m_sign.
-    t0 = [_div_by_q_fxc(z, m_sign) for z in _fft_int_poly_fxp(qt0, M_QT_COEF)]
-    t1 = [_div_by_q_fxc(z, m_sign) for z in _fft_int_poly_fxp(qt1, M_QT_COEF)]
+    # |qt| < q/2 < 2^13; FFT widens to m=21 (n=512); fused ·INV_Q → m_sign.
+    t0 = [z.mul_to(INV_Q_FXC, m_sign) for z in _fft_int_poly_fxp(qt0, M_QT_COEF)]
+    t1 = [z.mul_to(INV_Q_FXC, m_sign) for z in _fft_int_poly_fxp(qt1, M_QT_COEF)]
     return [t0, t1], [qt0, qt1]

@@ -148,15 +148,6 @@ def retag_poly_fxc(poly: PolyC, m_new: int) -> PolyC:
 
 
 @beartype
-def retag_poly_fxr(poly: PolyR, m_new: int) -> PolyR:
-    """Value-preserving retag of every FxR in a PolyR to m_new (the real-poly
-    counterpart of `retag_poly_fxc`). No-op if already at m_new."""
-    if not poly or poly[0].m == m_new:
-        return poly
-    return [retag_fxr(z, m_new) for z in poly]
-
-
-@beartype
 def div_fft_fxp(f: PolyC, g: PolyR, m_out: int) -> PolyC:
     """Pointwise FxC ÷ real division: each f[i] divided by g[i] via the
     Newton-Raphson reciprocal (`nr_reciprocal`) then a multiply. The divisor
