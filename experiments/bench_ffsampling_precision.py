@@ -67,29 +67,6 @@ from fxp_constants_p127 import (  # noqa: E402
 _INVQ = {63: _INVQ_63, 127: _INVQ_127}
 _INVSIG = {63: _INVSIG_63, 127: _INVSIG_127}
 _SIGMIN = {63: _SIGMIN_63, 127: _SIGMIN_127}
-from ntrugen_filters import (  # noqa: E402
-    GAMMA_FG_512, GAMMA_HYBRID, GAMMA_ROOT,
-    norm_fft_fg, alpha_hybrid_squared, norm_fft_k,
-)
-
-def _filtered_sk(n):
-    """A SecretKey whose basis passes the FULL NTRUGen filter — γ_fg
-    (Check 1b), γ_hybrid (Check 2), γ_root (Check 4). Stock `SecretKey`
-    enforces only gs_norm, so we reject and regenerate until all checks
-    pass. This matches the deployed fxp pipeline, so keygen_fxp's fixed
-    budgets (M_L10_ROOT=5, M_L10_INNER=0, M_D=18) hold with no overflow.
-    """
-    while True:
-        sk = SecretKey(n)
-        f, g, F, G = sk.f, sk.g, sk.F, sk.G
-        if norm_fft_fg(f, g) > GAMMA_FG_512:
-            continue
-        if alpha_hybrid_squared(f, g) > GAMMA_HYBRID**2:
-            continue
-        if norm_fft_k(f, g, F, G) > GAMMA_ROOT:
-            continue
-        return sk
-
 # mpmath pipeline (reuse from ffldl bench).
 from _precision_ref import (  # noqa: E402
     _mp_fft, _mp_split_fft, _mp_merge_fft, _mp_adj,
@@ -160,7 +137,7 @@ def build_fxp_tree_at_p_selfconsistent(sk, p, m_sign):
     inv_sigma_fxr = _INVSIG[p][sk.n]   # 1/σ (INV_SIGMA), m=-7, p-precise (not float64)
     sigmin_fxr = _SIGMIN[p][sk.n]      # σ_min, m=1, p-precise
     # Budgets fixed inside keygen_fxp (M_L10_ROOT=5, M_L10_INNER=0, M_D=18);
-    # valid because `sk` passes the full NTRUGen filter (see _filtered_sk).
+    # valid because `ntru_gen` (hence SecretKey) applies the full filter.
     return keygen_fxp(
         G_fxp, q=FALCON_Q, inv_sigma=inv_sigma_fxr, sigmin=sigmin_fxr,
         iters=6,  # safe default for both p=63 and p=127 (see ffldl_fxp.rsqrt)
@@ -452,7 +429,7 @@ def main(n_trials=1000):
     m_sign = 21
     random.seed(2026)
     print(f"Generating Falcon-{n} keypair (full NTRUGen filter)...")
-    sk = _filtered_sk(n)
+    sk = SecretKey(n)   # ntru_gen applies the full filter (Checks 1b/2/3/4 + 127)
 
     print("Computing exact Gram + mpmath FFT...")
     G_mp = _gram_int_then_mp_fft(sk)

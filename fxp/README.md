@@ -133,16 +133,13 @@ the NTT that is already in Falcon's stack. This:
   `sk.sigma` and `sk.sigmin`, are cached on `sk` after the first
   signing).
 
-## Format choices for Falcon-512 at `p = 63`
+## Format choices (`m` budgets)
 
-| quantity | `m` | rationale |
-|---|---|---|
-| Gram entries (per-block, FFT) | `⌈log₂ max\|G_ij\|⌉+1` | tight |
-| `L_10` at root | `5` | `‖L_10_root‖_∞ ≤ γ_root = 24` by NTRUGen Check 4 (rejection sampling on `‖fft(k)‖_∞`, `k = G_10/G_00 = L_10_root`). Hence `\|L_10\| < 32 = 2^5` suffices. The earlier value `m=11` came from the loose analytic bound `γ_FG²·α_h²/q ≈ 2^10.4`; γ_root is strictly tighter. |
-| `L_10` at non-root | `0` | At every non-root ffLDL level, the 2x2 Gram has structure `[[a, b], [adj(b), a]]` (equal diagonals), so `\|L_10\| = \|b/a\| ≤ 1` by Cauchy-Schwarz, strict for non-singular keys. `m=0` is tight, saves 1 bit on each `(t-z)·L_10` product mul in ffsampling. |
-| `D_ii` (internal levels) | `18` (or `19` w/o filter) | With the paper's `γ_hybrid ≤ 4` filter on NTRUGen, Lemma 9 bounds every `D_ii ≤ α_h²·q = 16·q ≈ 2^17.58`, so **`m=18` suffices** — this is the code default (`ffldl_fxp.keygen_fxp(..., m_D=18)`). Without the filter (e.g. stock Falcon NTRUGen, which applies only `gs_norm ≤ 1.17²·q`), α_hybrid can reach ≥ 5.7 empirically, and `D_11 = q²/D_00` at the root can reach `α_hybrid²·q ≈ 32·q ≈ 2^18.6` — pass `m_D=19` in that case. |
-| `σ_i` (leaves, post-normalize) | `1` | With Falcon NTRUGen's `gs_norm ≤ 1.17²·q` filter, every leaf `D_ii` is in `[q/1.37, 1.37·q]`, so `σ_i = σ/√D_ii ≤ σ·1.17/√q ≈ 1.75 < 2`. If the `gs_norm` filter is skipped, fall back to `m=3` using the lax Lemma 9 bound (`D_ii ≤ 16·q`, `σ_i ≤ 5.96`). |
-| t, z (throughout ffsampling) | `18` (tweak) / `21` (std) | Lemma 13 with Cholesky + `γ_root = 24`. Tweak makes `‖t‖_∞ ≤ n/2 = 2^8` ⇒ `m=18` covers root + drift. Std-mode (`use_tweak=USE_TWEAK_STD`) has `‖t̂_root‖_∞ < n·γ_FG ≈ 2^20.77` plus drift `≈ 2^17.61` (sum `≈ 2^20.93`), so `sign_tweak.py` floors `m_sign` to 21. |
+Every `m` used in the pipeline is a fixed Falcon-512 constant defined —
+with its derivation — in **`m_budgets.py`** (single source of truth).
+`scripts/derive_m_budgets.py` re-derives each bound from the NTRUGen
+thresholds and prints chosen vs derived (all budgets are proven;
+`tests/test_m_budgets_derivation.py` asserts `chosen >= derived`).
 
 The empirical evidence behind each bound, and the precision benchmarks
 (FP vs FxP-63 vs FxP-127 vs mpmath-256), are reported in the paper.
