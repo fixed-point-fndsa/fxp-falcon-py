@@ -72,8 +72,12 @@ def fft_fxp(f: PolyR, m: int | None = None) -> PolyC:
     if m is None:
         m = f[0].m + (n.bit_length() - 1)            # m(f) + log₂n
     if n == 2:
-        return [retag_fxc(FxC(re=f[0], im=f[1]), m),
-                retag_fxc(FxC(re=f[0], im=-f[1]), m)]
+        # Retag the two real components to m FIRST, then pair them: the FxC is
+        # born at m, never as a transient at the (tighter) load m where its
+        # modulus √2·max could exceed 2^{load m}. Bit-identical to retagging
+        # the FxC (banker's shift is sign-symmetric).
+        r0, r1 = retag_fxr(f[0], m), retag_fxr(f[1], m)
+        return [FxC(re=r0, im=r1), FxC(re=r0, im=-r1)]
     return merge_fft_fxp([fft_fxp(f[0::2], m), fft_fxp(f[1::2], m)], m)
 
 

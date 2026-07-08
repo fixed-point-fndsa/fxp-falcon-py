@@ -24,10 +24,33 @@ table and the rationale.
 
 from __future__ import annotations
 
+import os
+from contextlib import contextmanager
 from dataclasses import dataclass
 from math import ldexp
 from typing import NamedTuple
 from beartype import beartype
+
+
+# Opt-in FxC modulus check. FxC promises |z| < 2^m, but verifying it costs a
+# big-int square + compare per construction — too much for the FFT inner loop,
+# so it is OFF by default (the FxR component check |x| < 2^p backstops the
+# catastrophic case; pipeline magnitude margins absorb the ½-bit soft case).
+# Enable it in tests to turn the promise into a tested invariant. The check is
+# EXACT: |z| < 2^m ⟺ |z|² < 2^{2m} ⟺ re.x² + im.x² < 2^{2p} (m cancels).
+_CHECK_MODULUS = os.environ.get("FXP_CHECK_MODULUS") == "1"
+
+
+@contextmanager
+def check_modulus(enabled: bool = True):
+    """Enable (or disable) the FxC modulus assert within this block, for
+    tests / debugging. Restores the previous setting on exit."""
+    global _CHECK_MODULUS
+    old, _CHECK_MODULUS = _CHECK_MODULUS, enabled
+    try:
+        yield
+    finally:
+        _CHECK_MODULUS = old
 
 
 def _bankers_shift(x: int, n: int) -> int:
@@ -130,10 +153,12 @@ class FxC:
     by only +1 per merge level (rather than +2). The component bound
     |Re|, |Im| < 2^m is implied since |Re|, |Im| <= |z|.
 
-    The construction does not verify the complex bound at runtime (only
-    each component's FxR invariant via __post_init__); correctness is
-    verified by the test suite. Callers building FxC values directly must
-    ensure the complex invariant holds.
+    By default __post_init__ verifies only each component's FxR invariant
+    (|Re|, |Im| < 2^p), not the modulus bound — checking |z| < 2^m costs a
+    big-int square per construction, too much for the FFT inner loop. Enable
+    the exact check (re.x² + im.x² < 2^{2p}) via `check_modulus()` / the
+    FXP_CHECK_MODULUS env var; `tests/` runs the deployed pipeline under it,
+    turning the modulus promise into a tested invariant.
     """
 
     re: FxR
@@ -141,6 +166,10 @@ class FxC:
 
     def __post_init__(self) -> None:
         assert (self.re.m, self.re.p) == (self.im.m, self.im.p), f"FxC re/im (m,p) {(self.re.m, self.re.p)} != {(self.im.m, self.im.p)}"
+        if _CHECK_MODULUS:
+            p = self.re.p
+            assert self.re.x ** 2 + self.im.x ** 2 < (1 << (2 * p)), \
+                f"FxC |z| ≥ 2^m (m={self.re.m}): re.x²+im.x² ≥ 2^{2 * p}"
 
     # ---- accessors --------------------------------------------------
 
