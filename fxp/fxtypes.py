@@ -68,12 +68,16 @@ def _bankers_shift(x: int, n: int) -> int:
 
 
 @beartype
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FxR:
     """
     Real fixed-point number in FX_{m,p}.
 
     value = x * 2^{m - p},  with x in Z and |x| < 2^p.
+
+    `slots=True`: a value type built by the million in the FFT — no per-instance
+    __dict__ (less memory, faster attribute access). `frozen=True`: immutable
+    value semantics, so an invariant can't be broken by a later field assignment.
     """
 
     x: int
@@ -143,7 +147,7 @@ class FxR:
 
 
 @beartype
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FxC:
     """Complex fixed-point number in cFX_{m,p}: two FxRs with same (m,p).
 
