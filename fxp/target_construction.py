@@ -16,11 +16,10 @@ from ntt import mul_zq  # noqa: E402
 from common import q as FALCON_Q  # noqa: E402
 
 from fxtypes import FxR, retag_fxr  # noqa: E402
-from fft_fxp import fft_fxp, retag_poly_fxc, mul_fft_to  # noqa: E402
+from fft_fxp import fft_fxp, mul_fft_to  # noqa: E402
 from fxp_constants_p63 import INV_Q_FXC  # noqa: E402  (m=-13, |1/q| ≈ 2^-13.586 < 2^-13)
 from m_budgets import (  # noqa: E402
-    M_POINT_COEF, M_CQ_COEF, M_B0_COEF_FG, M_B0_COEF_FG_UP, M_QT_COEF,
-    M_B_FG, M_B_FG_UP,
+    M_POINT_COEF, M_CQ_COEF, M_QT_COEF, M_B_FG, M_B_FG_UP,
 )
 
 
@@ -30,10 +29,10 @@ USE_TWEAK_STD = 0          # no tweak (standard target)
 USE_TWEAK_NTT = 1          # Section-5.1 NTT-exact tweak
 
 
-# Coefficient-domain m for fxp inputs (M_CQ_COEF, M_B0_COEF_FG[_UP],
-# M_QT_COEF; plain tight bounds — see m_budgets.py): fft_fxp widens by
-# log₂n = 9 (n=512), so FFT-domain polys land at m_in + 9 — fft(c/q) at 9,
-# B0 rows at 14 (f,g) / 16 (F,G), qt at 22.
+# Coefficient-domain m for the growing FFTs (M_CQ_COEF, M_QT_COEF; plain
+# tight bounds — see m_budgets.py): fft_fxp widens by log₂n = 9 (n=512), so
+# fft(c/q) lands at 9 and qt at 22. The B0 rows instead use the FIXED-m FFT
+# at their γ tags M_B_FG / M_B_FG_UP (see `_b0_fft_fxp`).
 
 
 def _center_signed(poly, modulus):
@@ -97,20 +96,19 @@ def _build_t_tweaked(sk, point):
 def _b0_fft_fxp(sk, p=63):
     """fxp FFT of B0 = [[g, −f], [G, −F]] at precision p (pure, uncached).
 
-    Rows load at their tight coefficient bounds (M_B0_COEF_FG / _FG_UP,
-    derivations in m_budgets) — FFT-internal roundings scale with the
-    running tag, so tight loads buy ~5–8 bits per row. Each row is then
-    retagged once (exact left-shift) to its FFT-domain γ bound (M_B_FG /
-    M_B_FG_UP), so every consumer sees the tight m.
+    Each row runs the FIXED-m FFT at its certified γ tag (M_B_FG for f,g via
+    γ_fg / Check 1b, M_B_FG_UP for F,G via γ_FG / Check 3): the coefficients
+    load there exactly (integers), and by the ‖sub-FFT‖ ≤ ‖FFT‖ bound every
+    level stays < 2^γtag, so the whole transform runs at that single tight m —
+    no growth, no retag, one rounding per butterfly. More precise than the
+    old grow-then-tighten schedule (its late roundings ran at the coarse
+    grown m). See `fft_fxp`.
     """
-    a, b = (fft_fxp([FxR.from_int(co, m=M_B0_COEF_FG, p=p) for co in poly])
-            for poly in (sk.g, [-c for c in sk.f]))
-    c, d = (fft_fxp([FxR.from_int(co, m=M_B0_COEF_FG_UP, p=p) for co in poly])
-            for poly in (sk.G, [-c for c in sk.F]))
-    return [
-        [retag_poly_fxc(a, M_B_FG), retag_poly_fxc(b, M_B_FG)],        # fft(g), fft(−f) — γ_fg
-        [retag_poly_fxc(c, M_B_FG_UP), retag_poly_fxc(d, M_B_FG_UP)],  # fft(G), fft(−F) — γ_FG
-    ]
+    a, b = (fft_fxp([FxR.from_int(co, m=M_B_FG, p=p) for co in poly], m=M_B_FG)
+            for poly in (sk.g, [-c for c in sk.f]))          # fft(g), fft(−f) — γ_fg
+    c, d = (fft_fxp([FxR.from_int(co, m=M_B_FG_UP, p=p) for co in poly], m=M_B_FG_UP)
+            for poly in (sk.G, [-c for c in sk.F]))          # fft(G), fft(−F) — γ_FG
+    return [[a, b], [c, d]]
 
 
 def _build_B0_fft_fxp_cache(sk, p=63):

@@ -51,12 +51,12 @@ from samplerz import samplerz as samplerz_ref  # noqa: E402
 from fxtypes import FxR, FxC, retag_fxr  # noqa: E402
 from fft_fxp import (  # noqa: E402
     add_fft_fxp, sub_fft_fxp, mul_fft_to, split_complex_fxp, merge_fft_fxp,
-    fft_fxp, retag_poly_fxc,
+    fft_fxp,
 )
 from ffldl_fxp import keygen_fxp  # noqa: E402
 from sign_tweak import _gram_fft_fxp  # noqa: E402  (deployed Gram, retag-before-mul)
 from m_budgets import (  # noqa: E402
-    M_B_FG, M_B_FG_UP, M_B0_COEF_FG, M_B0_COEF_FG_UP, M_CQ_COEF, M_POINT_COEF,
+    M_B_FG, M_B_FG_UP, M_CQ_COEF, M_POINT_COEF,
 )
 # p-precise generated constants (NOT from_float — a float64 1/q or 1/σ caps the
 # target / σ_i at ~2^-53 regardless of p, which would hide fxp-127's headroom).
@@ -108,30 +108,18 @@ def _mp_to_complex(poly_mp):
     return [complex(float(z.real), float(z.imag)) for z in poly_mp]
 
 
-def _tight_m_mp(max_abs_mp):
-    return max(1, int(math.ceil(float(mpmath.log(max_abs_mp, 2)))) + 1)
-
-
 def build_fxp_tree_at_p_selfconsistent(sk, p, m_sign):
     """Fully self-consistent fxp pipeline at precision p: integer basis,
     FFT_fxp at p, polynomial-matrix multiply at p, ffLDL at p."""
     B = [[sk.g, [-c for c in sk.f]],
          [sk.G, [-c for c in sk.F]]]
 
-    max_coef = max(max(abs(c) for c in B[i][j]) for i in range(2) for j in range(2))
-    m_B = max(1, int(math.ceil(math.log2(max_coef + 1))) + 1)
-
-    # Integer -> FxR at (m_B, p), exact embedding.
-    B_fxr = [[[FxR.from_int(int(c), m=m_B, p=p) for c in B[i][j]] for j in range(2)]
-             for i in range(2)]
-    # fft_fxp per block, then tighten each B0 row to its NTRUGen γ bound —
-    # exactly what `_build_B0_fft_fxp_cache` bakes for the deployed keygen
-    # (fft(g), fft(−f) → M_B_FG; fft(G), fft(−F) → M_B_FG_UP; an exact
-    # left-shift). `_gram_fft_fxp` asserts this contract — since the d84d761
-    # refactor it no longer retags internally.
-    B_fft = [[fft_fxp(B_fxr[i][j]) for j in range(2)] for i in range(2)]
-    B_fft = [[retag_poly_fxc(B_fft[0][0], M_B_FG),    retag_poly_fxc(B_fft[0][1], M_B_FG)],
-             [retag_poly_fxc(B_fft[1][0], M_B_FG_UP), retag_poly_fxc(B_fft[1][1], M_B_FG_UP)]]
+    # Fixed-m FFT per block at its NTRUGen γ tag — exactly what the deployed
+    # `_b0_fft_fxp` runs (fft(g), fft(−f) at M_B_FG; fft(G), fft(−F) at
+    # M_B_FG_UP; load + transform + output all at that single tag).
+    m_row = (M_B_FG, M_B_FG, M_B_FG_UP, M_B_FG_UP)
+    B_fft = [[fft_fxp([FxR.from_int(int(c), m=m_row[2 * i + j], p=p) for c in B[i][j]],
+                      m=m_row[2 * i + j]) for j in range(2)] for i in range(2)]
     G_fxp = _gram_fft_fxp(B_fft)
 
     inv_sigma_fxr = _INVSIG[p][sk.n]   # 1/σ (INV_SIGMA), m=-7, p-precise (not float64)
@@ -227,14 +215,10 @@ def build_t_at_all_precisions(sk, c, p_fxp_list, m_sign):
         cq_fft = fft_fxp([retag_fxr(FxR.from_int(int(ci), m=M_POINT_COEF, p=p)
                                     * inv_q, M_CQ_COEF)   # 1 → 0: exact shift
                           for ci in c])
-        # Coefficient loads at the tight per-row bounds (M_B0_COEF_FG_UP=7
-        # for F, M_B0_COEF_FG=5 for f), then retag fft(F), fft(f) to their
-        # tight γ bounds BEFORE the products — matches the deployed
-        # `_build_t_standard_fxp` (M_B_FG_UP=γ_FG for F, M_B_FG=γ_fg for f).
-        F_fxc = retag_poly_fxc(
-            fft_fxp([FxR.from_int(int(F_i), m=M_B0_COEF_FG_UP, p=p) for F_i in sk.F]), M_B_FG_UP)
-        f_fxc = retag_poly_fxc(
-            fft_fxp([FxR.from_int(int(f_i), m=M_B0_COEF_FG, p=p) for f_i in sk.f]), M_B_FG)
+        # F, f via the fixed-m FFT at their γ tags (M_B_FG_UP, M_B_FG) —
+        # matches the deployed `_build_t_standard_fxp` / `_b0_fft_fxp`.
+        F_fxc = fft_fxp([FxR.from_int(int(F_i), m=M_B_FG_UP, p=p) for F_i in sk.F], m=M_B_FG_UP)
+        f_fxc = fft_fxp([FxR.from_int(int(f_i), m=M_B_FG, p=p) for f_i in sk.f], m=M_B_FG)
         t0 = [-z for z in mul_fft_to(cq_fft, F_fxc, m_sign)]
         t1 = mul_fft_to(cq_fft, f_fxc, m_sign)
         t_fxps[p] = [t0, t1]
@@ -326,7 +310,7 @@ def _walker(t_fp, t_fxp, t_mp, tree_fp, tree_fxp, tree_mp,
     )
 
     z1_fp = _merge_float(z_fp_right)
-    z1_fxp = retag_poly_fxc(merge_fft_fxp(z_fxp_right), m_sign)
+    z1_fxp = merge_fft_fxp(z_fxp_right, m_sign)   # fixed-m merge, no post-retag
     z1_mp = _mp_merge_fft(*z_mp_right)
 
     # t_0' = t_0 + (t_1 - z_1) * ell.
@@ -375,7 +359,7 @@ def _walker(t_fp, t_fxp, t_mp, tree_fp, tree_fxp, tree_mp,
     )
 
     z0_fp = _merge_float(z_fp_left)
-    z0_fxp = retag_poly_fxc(merge_fft_fxp(z_fxp_left), m_sign)
+    z0_fxp = merge_fft_fxp(z_fxp_left, m_sign)   # fixed-m merge, no post-retag
     z0_mp = _mp_merge_fft(*z_mp_left)
 
     return [z0_fp, z1_fp], [z0_fxp, z1_fxp], [z0_mp, z1_mp]

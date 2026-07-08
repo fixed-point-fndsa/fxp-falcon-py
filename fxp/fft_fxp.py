@@ -2,22 +2,25 @@
 Fixed-point FFT over R[x]/(x^n+1), on FxR/FxC values.
 
 Twiddle constants live at (m=1, p), selected by input's p (63 or 127).
-Under the complex-modulus convention, multiplying by a unit twiddle
-widens m by +1 (from the m_w=1 label), and each merge level grows the
-output m by +1 (structurally, from the butterfly sum |a ± w·b| ≤ 2·max).
-The n=2 base case ALSO widens by +1: packing two reals into orthogonal
-components creates a modulus up to √2·2^{m_in} (Pythagoras) — this is
-where the FFT's √2 is born, and the base case pays for it. Full FFT of a
-length-n input: m_out = m_in + log₂(n).
 
-This makes the contract TOTAL — provable for any legal input, however
-saturating: the worst-case modulus of a size-N partial transform is
-G(N)·max with G(2) = √2 and G(2N) ≤ 2·G(N) (triangle at each merge), so
-G(N) ≤ N/√2 < N, while the size-N tag allows N·2^{m_in}. No zero-mean or
-concentration assumption; callers load coefficients at their tight m.
+The forward FFT runs at a SINGLE tag m, resolved once at entry and fed
+unchanged to every level (no per-level growth). Correctness rests on the
+averaging bound: a size-N partial transform of f is a value of some sub-FFT,
+so ‖·‖_∞ ≤ ‖FFT(f)‖_∞ — hence if the OUTPUT fits in 2^m, EVERY intermediate
+does too, and no butterfly overflows. Two ways to fix m (see `fft_fxp`):
+  - m given  : the certified output tag (e.g. B0 rows at their γ tags) —
+               tight and retag-free.
+  - m = None : m(f) + log₂n, the always-valid output bound (‖FFT‖ ≤
+               (n/√2)·2^{m(f)} < 2^{m(f)+log₂n}), for uncertified inputs.
+Since the halves already sit at m, the butterfly is one twiddle mul (emit at
+m, |w|=1 preserves modulus) plus an EXACT add — one rounding per butterfly,
+no f0 widen. See `merge_fft_fxp`.
 
-Magnitude changes use `retag_fxc` (value-preserving): widen m before the
-butterfly sums, bring split's f1 back to m. Split's ÷2 is a label-only retag.
+The inverse FFT is separate: `split_complex_fxp` preserves m (the ÷2 offsets
+the twiddle mul's +1), so `ifft_fxp` is m-preserving throughout.
+
+Magnitude changes use `retag_fxc` (value-preserving): the base-case load
+retag, and bring split's f1 back to m. Split's ÷2 is a label-only retag.
 """
 
 from beartype import beartype
@@ -48,43 +51,50 @@ def _roots_for(p: int):
 
 
 @beartype
-def fft_fxp(f: PolyR) -> PolyC:
-    """FFT of a real polynomial in R[x]/(x^n+1).
+def fft_fxp(f: PolyR, m: int | None = None) -> PolyC:
+    """FFT of a real polynomial in R[x]/(x^n+1), run at a SINGLE tag m.
 
-    Input:  n FxR values sharing (m_in, p).
-    Output: n FxC values at (m_in + log₂n, p).
+    m is resolved once at entry and fed unchanged to every level:
+      - m given : run the whole transform at m. Valid iff ‖FFT(f)‖_∞ < 2^m
+        (by ‖sub-FFT‖ ≤ ‖FFT‖, every intermediate is < 2^m — no overflow).
+        Pass a CERTIFIED output tag: the B0 rows use their γ tags M_B_FG /
+        M_B_FG_UP, giving the tight, retag-free transform.
+      - m None  : m = m(f) + log₂n, the always-valid output bound (‖FFT‖ ≤
+        (n/√2)·2^{m(f)} < 2^{m(f)+log₂n}). For uncertified inputs (c/q, qt);
+        set-and-forget, robust to a missing m.
+
+    Integer coefficients embed exactly at any m; a fractional input tagged
+    below m (c/q) loses its sub-ULP bits at the base-case load retag, far
+    below the pipeline's needs. One rounding per butterfly — see `merge_fft_fxp`.
     """
     n = len(f)
     assert n >= 2 and (n & (n - 1)) == 0, "n must be a power of 2"
+    if m is None:
+        m = f[0].m + (n.bit_length() - 1)            # m(f) + log₂n
     if n == 2:
-        # f_fft = [f[0] + i·f[1], f[0] − i·f[1]], emitted at m_in + 1: the
-        # packing of two reals into orthogonal components makes a modulus up
-        # to √2·2^{m_in} (Pythagoras), so the base case pays the +1 that
-        # keeps the tag a true modulus bound for ANY input (see module
-        # docstring). The widen is exact for integer loads (even mantissas).
-        m1 = f[0].m + 1
-        return [retag_fxc(FxC(re=f[0], im=f[1]), m1),
-                retag_fxc(FxC(re=f[0], im=-f[1]), m1)]
-    return merge_fft_fxp([fft_fxp(f[0::2]), fft_fxp(f[1::2])])
+        return [retag_fxc(FxC(re=f[0], im=f[1]), m),
+                retag_fxc(FxC(re=f[0], im=-f[1]), m)]
+    return merge_fft_fxp([fft_fxp(f[0::2], m), fft_fxp(f[1::2], m)], m)
 
 
 @beartype
-def merge_fft_fxp(f_list_fft: list[PolyC]) -> PolyC:
-    """Combine two length-n/2 FFTs into one length-n (inverse of split_complex_fxp).
+def merge_fft_fxp(f_list_fft: list[PolyC], m: int) -> PolyC:
+    """Combine two length-n/2 FFTs (both already at m) into one length-n at m.
 
-    Both halves must share (m_k, p). Output is (m_k + 1, p). The +1 growth
-    is structural (butterfly |a ± w·b| ≤ 2·max), and naturally produced
-    by the w·f1 mul (w at m=1) — we only widen f0 to match.
+    Inverse of `split_complex_fxp`. |w|=1 so the twiddle mul keeps the
+    modulus; the butterfly output is a value of the (sub-)FFT, ≤ ‖FFT‖ < 2^m
+    by the averaging bound, so `f0 ± w_f1` fits at m with no widen. One
+    rounding per butterfly (the mul emitting at m), the add is exact.
     """
     f0_fft, f1_fft = f_list_fft
     n = 2 * len(f0_fft)
     w = _roots_for(f0_fft[0].p)[n]
     out = [None] * n
     for i in range(n // 2):
-        w_f1 = w[2 * i] * f1_fft[i]                              # (m_k + 1, p)
-        f0_wide = retag_fxc(f0_fft[i], f0_fft[i].m + 1)  # widen m by 1
-        out[2 * i] = f0_wide + w_f1
-        out[2 * i + 1] = f0_wide - w_f1
+        w_f1 = w[2 * i].mul_to(f1_fft[i], m)         # emit at m (|w|=1)
+        f0 = f0_fft[i]                                        # already at m
+        out[2 * i] = f0 + w_f1
+        out[2 * i + 1] = f0 - w_f1
     return out
 
 
@@ -135,24 +145,14 @@ def mul_fft_fxp(f: PolyC, g: PolyC) -> PolyC:
 @beartype
 def mul_fft_to(f: PolyC, g: PolyC, m_out: int) -> PolyC:
     """Pointwise FxC multiply emitting directly at the budget m_out (fused
-    multiply-and-retag, single round). Replaces the common idiom
-    `retag_poly_fxc(mul_fft_fxp(f, g), m_out)` — one rounding instead of two
-    (see `FxC.mul_to`). NOT bit-identical to that idiom, but more accurate."""
+    multiply-and-retag, single round; see `FxC.mul_to`) — one rounding rather
+    than a separate multiply then retag."""
     return [a.mul_to(b, m_out) for a, b in zip(f, g)]
 
 @beartype
 def adj_fft_fxp(f: PolyC) -> PolyC:
     """Complex conjugate (= FFT-domain adjoint of a real poly)."""
     return [z.conjugate() for z in f]
-
-
-@beartype
-def retag_poly_fxc(poly: PolyC, m_new: int) -> PolyC:
-    """Value-preserving retag of every element in a PolyC to m_new.
-    No-op (returns the same list) if already at m_new."""
-    if not poly or poly[0].m == m_new:
-        return poly
-    return [retag_fxc(z, m_new) for z in poly]
 
 
 @beartype

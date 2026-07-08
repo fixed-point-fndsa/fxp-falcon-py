@@ -28,8 +28,6 @@ class Params:
     gamma_FG: int = 3500        # Check 3
     gamma_root: int = 24        # Check 4
     alpha_gpv: float = 1.17     # stock gs_norm bound (final leaves)
-    cdt_kmax: int = 17          # gen_poly CDT support (gauss_512)
-    fg_coef_limit: int = 127    # int8 encoding filter on F, G
 
 
 def _m_min(bound: float, attainable: bool) -> int:
@@ -72,13 +70,13 @@ def derive(p: Params) -> dict:
     def add(name, bound, attainable, formula, source):
         d[name] = (_m_min(bound, attainable), formula, source)
 
-    # Coefficient-domain loads (integer values: bounds are attainable).
-    add("M_B0_COEF_FG", p.cdt_kmax, True, "|f,g coefs| <= CDT kmax", "gauss table (c-fn-dsa)")
-    add("M_B0_COEF_FG_UP", p.fg_coef_limit, True, "||F,G||_inf <= 127", "int8 encoding filter")
+    # Coefficient-domain loads for the growing FFTs (integer bounds attainable).
     add("M_QT_COEF", (p.q - 1) / 2, True, "|qt| <= (q-1)/2", "mod+- q centering")
     add("M_POINT_COEF", p.q - 1, True, "point in [0, q)", "hash_to_point")
     add("M_CQ_COEF", 1, False, "c/q <= (q-1)/q < 1", "coefficient-domain /q")
-    # FFT-domain B0 rows (check thresholds: strict sups).
+    # FFT-domain B0 rows (check thresholds: strict sups). Also the FIXED-m FFT
+    # tag AND load tag for f,g / F,G — no separate coefficient-load budget
+    # (‖f,g‖ ≤ 17 < 2^8, ‖F,G‖ ≤ 127 < 2^12 fit these, so the load is exact).
     add("M_B_FG", p.gamma_fg, False, "||fft(f,g)|| < gamma_fg", "Check 1b")
     add("M_B_FG_UP", p.gamma_FG, True, "||fft(F,G)|| <= gamma_FG", "Check 3")
     # Root Gram.
@@ -108,8 +106,7 @@ def main():
     ap = argparse.ArgumentParser()
     for f, t in (("n", int), ("q", int), ("bitsec", int), ("sigma", float),
                  ("gamma-fg", int), ("alpha-h", int), ("gamma-FG", int),
-                 ("gamma-root", int), ("alpha-gpv", float), ("cdt-kmax", int),
-                 ("fg-coef-limit", int)):
+                 ("gamma-root", int), ("alpha-gpv", float)):
         ap.add_argument(f"--{f}", type=t, default=None)
     args = ap.parse_args()
     p = Params(**{k.replace("-", "_"): v for k, v in vars(args).items()
@@ -117,8 +114,7 @@ def main():
 
     d = derive(p)
     print(f"Params: n={p.n} q={p.q} lambda={p.bitsec} "
-          f"gammas=({p.gamma_fg},{p.alpha_h},{p.gamma_FG},{p.gamma_root}) "
-          f"kmax={p.cdt_kmax} lim={p.fg_coef_limit}")
+          f"gammas=({p.gamma_fg},{p.alpha_h},{p.gamma_FG},{p.gamma_root})")
     print(f"tau={d['_tau']:.3f}  A_child={d['_A_child']:.1f}  "
           f"drift={d['_drift']:.0f}=2^{math.log2(d['_drift']):.2f}\n")
 

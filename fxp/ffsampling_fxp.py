@@ -27,7 +27,6 @@ from beartype import beartype
 from fxtypes import FxR, FxC, PolyC, FFLDLTree
 from fft_fxp import (
     add_fft_fxp, sub_fft_fxp, mul_fft_to, split_complex_fxp, merge_fft_fxp,
-    retag_poly_fxc,
 )
 from samplerz_fxp import samplerz_fxp
 from m_budgets import M_SIGN_DEFAULT
@@ -64,7 +63,9 @@ def ffsampling_fxp(t: list[PolyC], tree: FFLDLTree,
         t_split = list(split_complex_fxp(t_in))
         assert t_split[0][0].re.m == m_sign, f"split m={t_split[0][0].re.m} != m_sign={m_sign}"
         z_sub = ffsampling_fxp(t_split, subtree, randombytes, m_sign)
-        return retag_poly_fxc(merge_fft_fxp(z_sub), m_sign)
+        # merge directly at m_sign: z_sub already there, ‖ẑ‖ < 2^m_sign
+        # (Lemma 13), so the fixed-m merge fits with no post-retag.
+        return merge_fft_fxp(z_sub, m_sign)
 
     # Right: sample z_1 from t_1.
     z1_fft = _recurse(t[1], tree1)

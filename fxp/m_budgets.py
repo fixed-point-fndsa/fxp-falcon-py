@@ -57,23 +57,17 @@ M_POINT_COEF = 14
 # Dividing by q before the FFT keeps the std chain small (fft(c/q) at m=9,
 # products ≤ 2^21); the former (ĉ·d̂)·INV_Q route peaked at a transient m=34.
 M_CQ_COEF = 0
-# FFT loads are plain tight coefficient bounds: `fft_fxp`'s contract
-# (m_out = m_in + log₂n, the n=2 base case paying the Pythagorean √2 of
-# packing two reals into orthogonal components) is TOTAL — provable for any
-# legal input via G(N) ≤ N/√2 < N, with no condition on the caller. History:
-# until 2026-07-08 the base case kept m_in (contract log₂n − 1) and the
-# per-level tags were heuristic for saturating loads (127@7 breakable by a
-# 4-coefficient F passing all NTRUGen checks; found via Bachir's output-side
-# bound); briefly fixed caller-side (√2·max ≤ 2^{m_in}: F,G@8, qt@14) before
-# moving the bit into the base case where the √2 is born.
-#
-# B0 = [[g,−f],[G,−F]] coefficient-domain loads (before fft_fxp) — NOT the
-# FFT-domain γ bounds (M_B_FG / M_B_FG_UP below). Integers embed exactly at
-# any tag; tight tags shrink every FFT-internal rounding (ULP 2^{m_level−p}).
-#   f, g: ‖f,g‖_∞ ≤ 17 < 2^5 — CDT support (see `ntrugen.gen_poly`).
-M_B0_COEF_FG = 5
-#   F, G: ‖F,G‖_∞ ≤ 127 < 2^7 — int8 encoding filter (see `FG_COEF_LIMIT`).
-M_B0_COEF_FG_UP = 7
+# FFT tag policy. `fft_fxp` has two modes (see its docstring):
+#   GROWING  (m=None): m_out = m_in + log₂n, the n=2 base case paying the
+#     Pythagorean √2 — TOTAL, provable for any input via G(N) ≤ N/√2 < N.
+#     Used where the output is not certified: c/q (M_CQ_COEF) and qt
+#     (M_QT_COEF), loaded at their tight coefficient bounds below.
+#   FIXED (m given): the whole transform runs at a certified output tag with
+#     no growth (‖sub-FFT‖ ≤ ‖FFT‖ keeps every level under it). Used for the
+#     B0 rows f,g / F,G AT their γ tags M_B_FG / M_B_FG_UP directly — so those
+#     rows have NO separate coefficient-load budget (the old M_B0_COEF_FG/_UP,
+#     removed 2026-07-08; the ‖f,g‖≤17, ‖F,G‖≤127 bounds only need to fit the
+#     γ tag for the load to be exact, which `test_keygen_bounds` pins).
 # Tweak target: qt = (−c·F, c·f) mod± q centered ⇒ |qt|_∞ ≤ q/2 < 2^13.
 M_QT_COEF = 13
 
@@ -88,7 +82,8 @@ M_SIGN_DEFAULT = 18
 #   std path: point ∈ [0,q) ⇒ ‖t̂_root‖_∞ < n·γ_FG ≈ 2^20.77 + drift ≈ 2^20.93 ⇒ 21.
 M_SIGN_STD = 21
 
-# B0 rows in FFT domain, retagged tightly for the Gram and the std target:
+# B0 rows in FFT domain (the FIXED-m fft tag AND the load tag — see the FFT
+# tag policy above and `_b0_fft_fxp`), feeding the Gram and the std target:
 M_B_FG = 8       # a, b = fft(g), fft(−f) — γ_fg = 255 < 2^8 (Check 1b)
 M_B_FG_UP = 12   # c, d = fft(G), fft(−F) — γ_FG = 3500 < 2^12 (Check 3)
 # The final s = (t − z)·B0 needs NO fxp budget: since t·B0 = (c, 0) exactly

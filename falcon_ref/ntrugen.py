@@ -222,7 +222,8 @@ def gs_norm(f, g, q):
 # verbatim from the FN-DSA reference keygen (Pornin's kgen_gauss.c). A sample
 # is #{tab[k] < y} - kmax for a uniform 16-bit y, so the support is HARD-
 # bounded by the table length: kmax = 24 / 17 / 12 for n = 256 / 512 / 1024.
-# The n=512 bound (|c| <= 17 < 2^5) licenses M_B0_COEF_FG = 5 (m_budgets).
+# The n=512 bound (|c| <= 17 < 2^8 = M_B_FG) makes the fixed-m FFT load of
+# f,g exact (m_budgets / _b0_fft_fxp).
 _GAUSS_256 = [
         1,     3,     6,    11,    22,    40,    73,   129,
       222,   371,   602,   950,  1460,  2183,  3179,  4509,
@@ -295,7 +296,8 @@ def ntru_gen(n):
       Check 3 (γ_FG):      bounds ‖fft(F,G)‖_∞ → governs `m_sign = 21`.
       Check 4 (γ_root):    bounds ‖fft(L_10_root)‖_∞ → governs `M_L10_ROOT = 5`.
     Plus the stock FN-DSA encoding limit ‖F,G‖_∞ ≤ 127 (int8 key format,
-    implicit in stock Falcon via the key codec) → `M_B0_COEF_FG_UP = 7`.
+    implicit in stock Falcon via the key codec) → the fixed-m FFT load of
+    F,G at `M_B_FG_UP = 12` is exact.
     Without these branches, an extreme key could violate the fxp
     m-budgets silently and crash a downstream `|x| < 2^p` assert.
 
