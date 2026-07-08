@@ -48,7 +48,7 @@ from rng import ChaCha20  # noqa: E402
 from common import q as FALCON_Q  # noqa: E402
 from samplerz import samplerz as samplerz_ref  # noqa: E402
 
-from fxtypes import FxR, FxC  # noqa: E402
+from fxtypes import FxR, FxC, retag_fxr  # noqa: E402
 from fft_fxp import (  # noqa: E402
     add_fft_fxp, sub_fft_fxp, mul_fft_to, split_complex_fxp, merge_fft_fxp,
     fft_fxp, retag_poly_fxc,
@@ -218,16 +218,18 @@ def build_t_at_all_precisions(sk, c, p_fxp_list, m_sign):
     t_fp = [_mp_to_complex(t0_mp), _mp_to_complex(t1_mp)]
 
     # ----- Self-consistent FxP at each p: c/q in COEFFICIENT domain at
-    # M_CQ_COEF=1, fft at small tags, fused mul_fft_to to m_sign. Mirrors
+    # M_CQ_COEF=0 (exact retag from the natural ·INV_Q tag 1), fft at small
+    # tags, fused mul_fft_to to m_sign. Mirrors
     # `target_construction._build_t_standard_fxp` but parametric on p. -----
     t_fxps = {}
     for p in p_fxp_list:
         inv_q = _INVQ[p].re  # p-precise generated 1/q (m=-13), as in production
-        cq_fft = fft_fxp([FxR.from_int(int(ci), m=M_POINT_COEF, p=p) * inv_q
-                          for ci in c])  # lands at M_CQ_COEF = 1
-        # Coefficient loads at the per-row FFT-load tags (M_B0_COEF_FG_UP=8
-        # for F, M_B0_COEF_FG=5 for f — √2 rule), then retag fft(F), fft(f) to
-        # their tight γ bounds BEFORE the products — matches the deployed
+        cq_fft = fft_fxp([retag_fxr(FxR.from_int(int(ci), m=M_POINT_COEF, p=p)
+                                    * inv_q, M_CQ_COEF)   # 1 → 0: exact shift
+                          for ci in c])
+        # Coefficient loads at the tight per-row bounds (M_B0_COEF_FG_UP=7
+        # for F, M_B0_COEF_FG=5 for f), then retag fft(F), fft(f) to their
+        # tight γ bounds BEFORE the products — matches the deployed
         # `_build_t_standard_fxp` (M_B_FG_UP=γ_FG for F, M_B_FG=γ_fg for f).
         F_fxc = retag_poly_fxc(
             fft_fxp([FxR.from_int(int(F_i), m=M_B0_COEF_FG_UP, p=p) for F_i in sk.F]), M_B_FG_UP)

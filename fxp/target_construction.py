@@ -15,7 +15,7 @@ from fft import fft  # noqa: E402
 from ntt import mul_zq  # noqa: E402
 from common import q as FALCON_Q  # noqa: E402
 
-from fxtypes import FxR  # noqa: E402
+from fxtypes import FxR, retag_fxr  # noqa: E402
 from fft_fxp import fft_fxp, retag_poly_fxc, mul_fft_to  # noqa: E402
 from fxp_constants_p63 import INV_Q_FXC  # noqa: E402  (m=-13, |1/q| ≈ 2^-13.586 < 2^-13)
 from m_budgets import (  # noqa: E402
@@ -31,9 +31,9 @@ USE_TWEAK_NTT = 1          # Section-5.1 NTT-exact tweak
 
 
 # Coefficient-domain m for fxp inputs (M_CQ_COEF, M_B0_COEF_FG[_UP],
-# M_QT_COEF; all obey the √2 FFT-load rule — see m_budgets.py): fft_fxp
-# widens by log₂n − 1 = 8 (n=512), so FFT-domain polys land at m_in + 8 —
-# fft(c/q) at 9, B0 rows at 13 (f,g) / 16 (F,G), qt at 22.
+# M_QT_COEF; plain tight bounds — see m_budgets.py): fft_fxp widens by
+# log₂n = 9 (n=512), so FFT-domain polys land at m_in + 9 — fft(c/q) at 9,
+# B0 rows at 14 (f,g) / 16 (F,G), qt at 22.
 
 
 def _center_signed(poly, modulus):
@@ -128,21 +128,21 @@ def _fft_int_poly_fxp(coefs, m_in, p=63):
 def _build_t_standard_fxp(sk, point, m_sign):
     """Standard target c·d/q built directly in fxp (no float64 detour).
 
-    The division by q happens in COEFFICIENT domain: c_i/q < 1 lands at
-    M_CQ_COEF = 1 (the natural from_int(c)·INV_Q tag; the spare bit makes
-    the FFT drift ℓ¹-provable — see m_budgets), the FFT runs at tags 1→9,
-    and each pointwise product (c/q)̂·B̂ is emitted straight at m_sign by
-    `mul_fft_to` (single rounding). Same values as the former (ĉ·d̂)·INV_Q
-    route — the FFT's relative error is scale-invariant — but the runtime
-    magnitudes collapse: held ĉ 2^22 → 2^9, transient products 2^34/2^30
-    → 2^21. Returns (t_fxc_pair, None).
+    The division by q happens in COEFFICIENT domain: c_i/q < 1 is retagged
+    to its tight bound M_CQ_COEF = 0 (exact left shift from the natural
+    from_int(c)·INV_Q tag m = 1), the FFT runs at tags 0→9, and each
+    pointwise product (c/q)̂·B̂ is emitted straight at m_sign by `mul_fft_to`
+    (single rounding). Same values as the former (ĉ·d̂)·INV_Q route — the
+    FFT's relative error is scale-invariant — but the runtime magnitudes
+    collapse: held ĉ 2^22 → 2^9, transient products 2^34/2^30 → 2^21.
+    Returns (t_fxc_pair, None).
     """
     [_, b_fxc], [_, d_fxc] = _build_B0_fft_fxp_cache(sk)  # fft(−f) @M_B_FG, fft(−F) @M_B_FG_UP
     inv_q = INV_Q_FXC.re
-    cq = [FxR.from_int(ci, m=M_POINT_COEF, p=inv_q.p) * inv_q
-          for ci in point]                                # lands at M_CQ_COEF = 1
-    assert cq[0].m == M_CQ_COEF, f"c/q at m={cq[0].m} != M_CQ_COEF={M_CQ_COEF}"
-    cq_fft = fft_fxp(cq)                                  # m = M_CQ_COEF + 8 = 9
+    cq = [retag_fxr(FxR.from_int(ci, m=M_POINT_COEF, p=inv_q.p) * inv_q,
+                    M_CQ_COEF)                            # 1 → 0: exact shift
+          for ci in point]
+    cq_fft = fft_fxp(cq)                                  # m = M_CQ_COEF + 9 = 9
     t0 = mul_fft_to(cq_fft, d_fxc, m_sign)
     t1 = [-z for z in mul_fft_to(cq_fft, b_fxc, m_sign)]  # negation exact
     return [t0, t1], None
@@ -158,7 +158,7 @@ def _build_t_tweaked_fxp(sk, point, m_sign):
     Returns (t_fxc_pair, [qt0, qt1]).
     """
     qt0, qt1 = _build_qt(sk, point)
-    # |qt| ≤ q/2, loaded at 14 (√2 rule); FFT → m=22; fused ·INV_Q → m_sign.
+    # |qt| ≤ q/2 < 2^13; FFT → m = 13 + 9 = 22; fused ·INV_Q → m_sign.
     t0 = [z.mul_to(INV_Q_FXC, m_sign) for z in _fft_int_poly_fxp(qt0, M_QT_COEF)]
     t1 = [z.mul_to(INV_Q_FXC, m_sign) for z in _fft_int_poly_fxp(qt1, M_QT_COEF)]
     return [t0, t1], [qt0, qt1]

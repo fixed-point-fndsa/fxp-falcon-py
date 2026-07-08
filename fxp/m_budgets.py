@@ -48,38 +48,34 @@ M_NORM_OUT = 0
 
 # Hashed point: |point|_∞ < q < 2^14.
 M_POINT_COEF = 14
-# Std target: c/q computed in COEFFICIENT domain, c_i/q ≤ (q−1)/q < 1, loaded
-# at m = 1 per the FFT-load rule above (√2·max < 2^1). c/q is the input where
-# a saturating load actually BITES: dense POSITIVE (mean ≈ 1/2, no sign
-# cancellation), its low-frequency embeddings genuinely reach 2n/π·max ≈
-# 326·max > 2^8·max — at m = 0 the FFT overflows on legal hash points
-# (observed 2026-07-04). Dividing by q before the FFT keeps the std chain
-# small (fft(c/q) at m=9, products ≤ 2^21); the former (ĉ·d̂)·INV_Q route
-# peaked at a transient m=34 with a saturating c@14 load.
-M_CQ_COEF = 1
-# FFT-LOAD RULE (√2 lemma). Every coefficient poly fed to fft_fxp must be
-# loaded at m_in with max|coef| ≤ 2^{m_in}/√2, i.e. m_in = ⌈log₂(√2·max)⌉.
-# Why: the fft_fxp tag at sub-size N is m_in + log₂N − 1, i.e. (N/2)·2^{m_in},
-# while the worst-case partial-transform MODULUS is G(N)·max with
-#   G(2) = √2 (base case is Pythagorean: f(±i) = a ± ib, orthogonal phases)
-#   G(2N) ≤ 2·G(N) (triangle at each merge)   ⇒   G(N) ≤ N/√2.
-# So max ≤ 2^{m_in}/√2 covers EVERY level by pure Pythagoras+triangle — no
-# zero-mean/concentration assumption, and the n=2 √2 caveat is absorbed.
-# (Saturating loads are NOT covered: 127@7 or 6144@13 exceed the tags in the
-# worst case — found 2026-07-07 while auditing against Bachir's output-side
-# bound. `derive_m_budgets` derives these via the same rule.)
+# Std target: c/q computed in COEFFICIENT domain, c_i/q ≤ (q−1)/q < 1 = 2^0
+# (tight; the ·INV_Q product's natural m = 1 is retagged down, exact). c/q is
+# the input that historically BIT under the old log₂n − 1 contract: dense
+# POSITIVE (mean ≈ 1/2, no sign cancellation), its low-frequency embeddings
+# genuinely reach 2n/π·max ≈ 326·max, and the m = 0 load overflowed on legal
+# hash points (observed 2026-07-04) — under the total contract it is provable.
+# Dividing by q before the FFT keeps the std chain small (fft(c/q) at m=9,
+# products ≤ 2^21); the former (ĉ·d̂)·INV_Q route peaked at a transient m=34.
+M_CQ_COEF = 0
+# FFT loads are plain tight coefficient bounds: `fft_fxp`'s contract
+# (m_out = m_in + log₂n, the n=2 base case paying the Pythagorean √2 of
+# packing two reals into orthogonal components) is TOTAL — provable for any
+# legal input via G(N) ≤ N/√2 < N, with no condition on the caller. History:
+# until 2026-07-08 the base case kept m_in (contract log₂n − 1) and the
+# per-level tags were heuristic for saturating loads (127@7 breakable by a
+# 4-coefficient F passing all NTRUGen checks; found via Bachir's output-side
+# bound); briefly fixed caller-side (√2·max ≤ 2^{m_in}: F,G@8, qt@14) before
+# moving the bit into the base case where the √2 is born.
 #
 # B0 = [[g,−f],[G,−F]] coefficient-domain loads (before fft_fxp) — NOT the
 # FFT-domain γ bounds (M_B_FG / M_B_FG_UP below). Integers embed exactly at
 # any tag; tight tags shrink every FFT-internal rounding (ULP 2^{m_level−p}).
-#   f, g: ‖f,g‖_∞ ≤ 17 (CDT support, see `ntrugen.gen_poly`); √2·17 < 2^5.
+#   f, g: ‖f,g‖_∞ ≤ 17 < 2^5 — CDT support (see `ntrugen.gen_poly`).
 M_B0_COEF_FG = 5
-#   F, G: ‖F,G‖_∞ ≤ 127 (int8 filter, see `FG_COEF_LIMIT`); √2·127 < 2^8
-#   (127@7 has ratio 127/128 — heuristic until 2026-07-07).
-M_B0_COEF_FG_UP = 8
-# Tweak target: qt = (−c·F, c·f) mod± q centered ⇒ |qt|_∞ ≤ q/2; √2·q/2 < 2^14
-# (6144@13 has ratio 0.75 > 1/√2 — heuristic until 2026-07-07).
-M_QT_COEF = 14
+#   F, G: ‖F,G‖_∞ ≤ 127 < 2^7 — int8 encoding filter (see `FG_COEF_LIMIT`).
+M_B0_COEF_FG_UP = 7
+# Tweak target: qt = (−c·F, c·f) mod± q centered ⇒ |qt|_∞ ≤ q/2 < 2^13.
+M_QT_COEF = 13
 
 # --------------------------------------------------------------------- #
 # Signing: ffsampling targets + signature reconstruction.

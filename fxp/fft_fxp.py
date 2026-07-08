@@ -5,12 +5,16 @@ Twiddle constants live at (m=1, p), selected by input's p (63 or 127).
 Under the complex-modulus convention, multiplying by a unit twiddle
 widens m by +1 (from the m_w=1 label), and each merge level grows the
 output m by +1 (structurally, from the butterfly sum |a ± w·b| ≤ 2·max).
-Full FFT of a length-n input: m_out = m_in + log₂(n) − 1. Caveat: the n=2
-base case keeps the label m_in although its output MODULUS can reach
-√2·2^{m_in} (components stay < 2^{m_in}), so the m_out contract carries a
-half-bit deficit for inputs that saturate m_in — such adversarial inputs
-trip a butterfly's |x| < 2^p assert (loud, not silent). Pipeline inputs
-keep multi-bit modulus margins that absorb it.
+The n=2 base case ALSO widens by +1: packing two reals into orthogonal
+components creates a modulus up to √2·2^{m_in} (Pythagoras) — this is
+where the FFT's √2 is born, and the base case pays for it. Full FFT of a
+length-n input: m_out = m_in + log₂(n).
+
+This makes the contract TOTAL — provable for any legal input, however
+saturating: the worst-case modulus of a size-N partial transform is
+G(N)·max with G(2) = √2 and G(2N) ≤ 2·G(N) (triangle at each merge), so
+G(N) ≤ N/√2 < N, while the size-N tag allows N·2^{m_in}. No zero-mean or
+concentration assumption; callers load coefficients at their tight m.
 
 Magnitude changes use `retag_fxc` (value-preserving): widen m before the
 butterfly sums, bring split's f1 back to m. Split's ÷2 is a label-only retag.
@@ -48,15 +52,19 @@ def fft_fxp(f: PolyR) -> PolyC:
     """FFT of a real polynomial in R[x]/(x^n+1).
 
     Input:  n FxR values sharing (m_in, p).
-    Output: n FxC values at (m_in + log₂n − 1, p) for n > 2, (m_in, p) at n=2.
+    Output: n FxC values at (m_in + log₂n, p).
     """
     n = len(f)
     assert n >= 2 and (n & (n - 1)) == 0, "n must be a power of 2"
     if n == 2:
-        # f_fft = [f[0] + i·f[1], f[0] − i·f[1]]. Components unchanged, but
-        # the MODULUS can reach √2·2^{m_in}: the kept label m_in is √2-loose
-        # vs the complex-modulus convention (see module docstring caveat).
-        return [FxC(re=f[0], im=f[1]), FxC(re=f[0], im=-f[1])]
+        # f_fft = [f[0] + i·f[1], f[0] − i·f[1]], emitted at m_in + 1: the
+        # packing of two reals into orthogonal components makes a modulus up
+        # to √2·2^{m_in} (Pythagoras), so the base case pays the +1 that
+        # keeps the tag a true modulus bound for ANY input (see module
+        # docstring). The widen is exact for integer loads (even mantissas).
+        m1 = f[0].m + 1
+        return [retag_fxc(FxC(re=f[0], im=f[1]), m1),
+                retag_fxc(FxC(re=f[0], im=-f[1]), m1)]
     return merge_fft_fxp([fft_fxp(f[0::2]), fft_fxp(f[1::2])])
 
 

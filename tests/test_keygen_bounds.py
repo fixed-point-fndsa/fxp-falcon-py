@@ -1,9 +1,9 @@
 """Pin the two hard coefficient-domain bounds behind the fxp B0 loads
-(m_budgets M_B0_COEF_FG = 5 / M_B0_COEF_FG_UP = 8): gen_poly's CDT support
+(m_budgets M_B0_COEF_FG = 5 / M_B0_COEF_FG_UP = 7): gen_poly's CDT support
 (n=512: |c| <= 17, the gauss_512 table length) and the ||F,G||_inf <= 127
-encoding filter — both checked against the sqrt2 FFT-load rule
-sqrt2*max <= 2^m (see m_budgets). A regression (e.g. an unbounded
-sum-of-samplerz gen_poly, or a load tag tightened below the rule) would
+encoding filter. The loads are plain tight bounds: fft_fxp's contract is
+total (the n=2 base case pays the sqrt2), so no extra load margin is
+needed. A regression (e.g. an unbounded sum-of-samplerz gen_poly) would
 silently invalidate the budgets and trip |x| < 2^p on a tail key."""
 
 import statistics
@@ -19,12 +19,6 @@ from ntrugen_filters import FG_COEF_LIMIT         # noqa: E402  (falcon_ref/)
 from m_budgets import M_B0_COEF_FG, M_B0_COEF_FG_UP  # noqa: E402  (fxp/)
 
 
-def _fft_load_covered(max_coef: int, m: int) -> bool:
-    """sqrt2 FFT-load rule, in exact integer arithmetic:
-    sqrt2*max <= 2^m  <=>  2*max^2 <= 4^m."""
-    return 2 * max_coef * max_coef <= 4 ** m
-
-
 def test_gen_poly_512_hard_support_and_shape():
     kmax = len(_GAUSS_512) // 2
     assert kmax == 17, "gauss_512 table length changed - re-derive M_B0_COEF_FG"
@@ -36,8 +30,7 @@ def test_gen_poly_512_hard_support_and_shape():
 
 
 def test_coefficient_bounds_license_m_budgets():
-    # CDT support fits the f,g FFT-load tag (sqrt2 rule): sqrt2*17 < 2^5.
-    assert _fft_load_covered(len(_GAUSS_512) // 2, M_B0_COEF_FG)
-    # The encoding filter fits the F,G FFT-load tag: sqrt2*127 < 2^8
-    # (m=7 fails this: 2*127^2 = 32258 > 4^7 = 16384).
-    assert _fft_load_covered(FG_COEF_LIMIT, M_B0_COEF_FG_UP)
+    # CDT support fits the f,g coefficient load tag.
+    assert len(_GAUSS_512) // 2 < 2 ** M_B0_COEF_FG
+    # The encoding filter fits the F,G coefficient load tag.
+    assert FG_COEF_LIMIT < 2 ** M_B0_COEF_FG_UP

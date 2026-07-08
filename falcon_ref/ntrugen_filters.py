@@ -25,7 +25,7 @@ GAMMA_ROOT = 24           # γ_root, Check 4
 
 # ‖F, G‖_∞ limit: the int8 secret-key encoding bound (Pornin's `lim = 127`
 # in solve_NTRU). Stock Falcon already rejects at encoding; explicit here so
-# the fxp load M_B0_COEF_FG_UP = 8 is guaranteed. Empirical max ≈ 80–105.
+# the fxp load M_B0_COEF_FG_UP = 7 is guaranteed. Empirical max ≈ 80–105.
 FG_COEF_LIMIT = 127
 
 

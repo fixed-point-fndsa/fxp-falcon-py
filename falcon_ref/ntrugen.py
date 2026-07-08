@@ -295,7 +295,7 @@ def ntru_gen(n):
       Check 3 (γ_FG):      bounds ‖fft(F,G)‖_∞ → governs `m_sign = 21`.
       Check 4 (γ_root):    bounds ‖fft(L_10_root)‖_∞ → governs `M_L10_ROOT = 5`.
     Plus the stock FN-DSA encoding limit ‖F,G‖_∞ ≤ 127 (int8 key format,
-    implicit in stock Falcon via the key codec) → `M_B0_COEF_FG_UP = 8`.
+    implicit in stock Falcon via the key codec) → `M_B0_COEF_FG_UP = 7`.
     Without these branches, an extreme key could violate the fxp
     m-budgets silently and crash a downstream `|x| < 2^p` assert.
 
