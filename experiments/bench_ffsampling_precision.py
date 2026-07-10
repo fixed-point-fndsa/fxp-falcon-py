@@ -119,7 +119,7 @@ def build_fxp_tree_at_p_selfconsistent(sk, p, m_sign):
     # M_B_FG_UP; load + transform + output all at that single tag).
     m_row = (M_B_FG, M_B_FG, M_B_FG_UP, M_B_FG_UP)
     B_fft = [[fft_fxp([FxR.from_int(int(c), m=m_row[2 * i + j], p=p) for c in B[i][j]],
-                      m=m_row[2 * i + j]) for j in range(2)] for i in range(2)]
+                      certified=True) for j in range(2)] for i in range(2)]
     G_fxp = _gram_fft_fxp(B_fft)
 
     inv_sigma_fxr = _INVSIG[p][sk.n]   # 1/σ (INV_SIGMA), m=-7, p-precise (not float64)
@@ -217,8 +217,8 @@ def build_t_at_all_precisions(sk, c, p_fxp_list, m_sign):
                           for ci in c])
         # F, f via the fixed-m FFT at their γ tags (M_B_FG_UP, M_B_FG) —
         # matches the deployed `_build_t_standard_fxp` / `_b0_fft_fxp`.
-        F_fxc = fft_fxp([FxR.from_int(int(F_i), m=M_B_FG_UP, p=p) for F_i in sk.F], m=M_B_FG_UP)
-        f_fxc = fft_fxp([FxR.from_int(int(f_i), m=M_B_FG, p=p) for f_i in sk.f], m=M_B_FG)
+        F_fxc = fft_fxp([FxR.from_int(int(F_i), m=M_B_FG_UP, p=p) for F_i in sk.F], certified=True)
+        f_fxc = fft_fxp([FxR.from_int(int(f_i), m=M_B_FG, p=p) for f_i in sk.f], certified=True)
         t0 = [-z for z in mul_fft_to(cq_fft, F_fxc, m_sign)]
         t1 = mul_fft_to(cq_fft, f_fxc, m_sign)
         t_fxps[p] = [t0, t1]

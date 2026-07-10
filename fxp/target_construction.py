@@ -96,17 +96,16 @@ def _build_t_tweaked(sk, point):
 def _b0_fft_fxp(sk, p=63):
     """fxp FFT of B0 = [[g, −f], [G, −F]] at precision p (pure, uncached).
 
-    Each row runs the FIXED-m FFT at its certified γ tag (M_B_FG for f,g via
-    γ_fg / Check 1b, M_B_FG_UP for F,G via γ_FG / Check 3): the coefficients
-    load there exactly (integers), and by the ‖sub-FFT‖ ≤ ‖FFT‖ bound every
-    level stays < 2^γtag, so the whole transform runs at that single tight m —
-    no growth, no retag, one rounding per butterfly. More precise than the
-    old grow-then-tighten schedule (its late roundings ran at the coarse
-    grown m). See `fft_fxp`.
+    Each row is loaded at its certified γ tag (M_B_FG for f,g via γ_fg /
+    Check 1b, M_B_FG_UP for F,G via γ_FG / Check 3) — integers embed exactly
+    at any tag — and transformed with `certified=True`, so the whole FFT runs
+    at that single tight m: no growth, no retag, one rounding per butterfly.
+    The checks are what buy this: without them the structural bound would put
+    the rows at 14 / 16, coarsening every internal rounding by 6 / 4 bits.
     """
-    a, b = (fft_fxp([FxR.from_int(co, m=M_B_FG, p=p) for co in poly], m=M_B_FG)
+    a, b = (fft_fxp([FxR.from_int(co, m=M_B_FG, p=p) for co in poly], certified=True)
             for poly in (sk.g, [-c for c in sk.f]))          # fft(g), fft(−f) — γ_fg
-    c, d = (fft_fxp([FxR.from_int(co, m=M_B_FG_UP, p=p) for co in poly], m=M_B_FG_UP)
+    c, d = (fft_fxp([FxR.from_int(co, m=M_B_FG_UP, p=p) for co in poly], certified=True)
             for poly in (sk.G, [-c for c in sk.F]))          # fft(G), fft(−F) — γ_FG
     return [[a, b], [c, d]]
 

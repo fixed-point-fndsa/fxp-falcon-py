@@ -7,20 +7,21 @@ The forward FFT runs at a SINGLE tag m, resolved once at entry and fed
 unchanged to every level (no per-level growth). Correctness rests on the
 averaging bound: a size-N partial transform of f is a value of some sub-FFT,
 so ‖·‖_∞ ≤ ‖FFT(f)‖_∞ — hence if the OUTPUT fits in 2^m, EVERY intermediate
-does too, and no butterfly overflows. Two ways to fix m (see `fft_fxp`):
-  - m given  : the certified output tag (e.g. B0 rows at their γ tags) —
-               tight and retag-free.
-  - m = None : m(f) + log₂n, the always-valid output bound (‖FFT‖ ≤
-               (n/√2)·2^{m(f)} < 2^{m(f)+log₂n}), for uncertified inputs.
+does too, and no butterfly overflows. `fft_fxp`'s `certified` flag says where
+that m comes from — NOT whether it is fixed (it always is):
+  - certified=True  : the caller's load tag already bounds the output (the B0
+                      rows, at their γ tags). m_out = m_in; no retag at all.
+  - certified=False : no such bound, so use the structural one, m_in + log₂n
+                      (‖FFT‖ ≤ (n/√2)·2^{m_in}). One retag of the inputs.
 Since the halves already sit at m, the butterfly is one twiddle mul (emit at
 m, |w|=1 preserves modulus) plus an EXACT add — one rounding per butterfly,
-no f0 widen. See `merge_fft_fxp`.
+no f0 widen. The recursion `_fft_at` is retag-free by construction.
 
 The inverse FFT is separate: `split_complex_fxp` preserves m (the ÷2 offsets
 the twiddle mul's +1), so `ifft_fxp` is m-preserving throughout.
 
-Magnitude changes use `retag_fxc` (value-preserving): the base-case load
-retag, and bring split's f1 back to m. Split's ÷2 is a label-only retag.
+Magnitude changes use `retag_fxc` (value-preserving): the uncertified input
+retag, and bringing split's f1 back to m. Split's ÷2 is a label-only retag.
 """
 
 from beartype import beartype
@@ -51,34 +52,47 @@ def _roots_for(p: int):
 
 
 @beartype
-def fft_fxp(f: PolyR, m: int | None = None) -> PolyC:
+def fft_fxp(f: PolyR, certified: bool = False) -> PolyC:
     """FFT of a real polynomial in R[x]/(x^n+1), run at a SINGLE tag m.
 
-    m is resolved once at entry and fed unchanged to every level:
-      - m given : run the whole transform at m. Valid iff ‖FFT(f)‖_∞ < 2^m
-        (by ‖sub-FFT‖ ≤ ‖FFT‖, every intermediate is < 2^m — no overflow).
-        Pass a CERTIFIED output tag: the B0 rows use their γ tags M_B_FG /
-        M_B_FG_UP, giving the tight, retag-free transform.
-      - m None  : m = m(f) + log₂n, the always-valid output bound (‖FFT‖ ≤
-        (n/√2)·2^{m(f)} < 2^{m(f)+log₂n}). For uncertified inputs (c/q, qt);
-        set-and-forget, robust to a missing m.
+    `certified` states what the CALLER knows about ‖FFT(f)‖_∞, which is all
+    that decides m (the transform is single-tag either way):
 
-    Integer coefficients embed exactly at any m; a fractional input tagged
-    below m (c/q) loses its sub-ULP bits at the base-case load retag, far
-    below the pipeline's needs. One rounding per butterfly — see `merge_fft_fxp`.
+      certified=True  — the caller guarantees ‖FFT(f)‖_∞ < 2^{m(f)}, so load
+        the coefficients at that tag and the transform stays there: m_out =
+        m_in, and NOT ONE retag occurs. This is what an NTRUGen check buys:
+        the B0 rows load at their γ tags (M_B_FG=8, M_B_FG_UP=12) instead of
+        the structural 14 / 16, which tightens every internal rounding.
+
+      certified=False — no such bound, so fall back on the structural one,
+        m_out = m(f) + log₂n (since ‖FFT‖ ≤ (n/√2)·2^{m(f)}). The inputs are
+        retagged once, up front, to that tag. Used for the hash-derived c/q
+        and qt, which no check bounds.
+
+    Validity in both cases rests on ‖sub-FFT‖ ≤ ‖FFT‖: if the OUTPUT fits in
+    2^m, every intermediate does. Integer coefficients retag exactly; only a
+    fractional input (c/q) loses bits there, far below the pipeline's needs.
     """
     n = len(f)
     assert n >= 2 and (n & (n - 1)) == 0, "n must be a power of 2"
-    if m is None:
+    if certified:
+        m = f[0].m
+    else:
         m = f[0].m + (n.bit_length() - 1)            # m(f) + log₂n
+        f = [retag_fxr(c, m) for c in f]             # once, here — not per level
+    return _fft_at(f, m)
+
+
+def _fft_at(f: PolyR, m: int) -> PolyC:
+    """Single-tag FFT recursion: every input, level and output sits at m, so
+    there is nothing to retag. Callers go through `fft_fxp`, which resolves m
+    and (if needed) brings the inputs to it."""
+    n = len(f)
     if n == 2:
-        # Retag the two real components to m FIRST, then pair them: the FxC is
-        # born at m, never as a transient at the (tighter) load m where its
-        # modulus √2·max could exceed 2^{load m}. Bit-identical to retagging
-        # the FxC (banker's shift is sign-symmetric).
-        r0, r1 = retag_fxr(f[0], m), retag_fxr(f[1], m)
-        return [FxC(re=r0, im=r1), FxC(re=r0, im=-r1)]
-    return merge_fft_fxp([fft_fxp(f[0::2], m), fft_fxp(f[1::2], m)], m)
+        # f_fft = [f0 + i·f1, f0 − i·f1]: the two reals become the orthogonal
+        # components of one FxC. Modulus √2·max ≤ ‖FFT‖ < 2^m, so no widen.
+        return [FxC(re=f[0], im=f[1]), FxC(re=f[0], im=-f[1])]
+    return merge_fft_fxp([_fft_at(f[0::2], m), _fft_at(f[1::2], m)], m)
 
 
 @beartype
