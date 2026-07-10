@@ -105,7 +105,7 @@ def test_from_int_to_int_roundtrip():
     # For every integer a in (-2^m, 2^m), from_int.to_int must return a.
     for m, p in [(4, 4), (4, 8), (8, 8), (2, 16)]:
         for a in range(-(1 << m) + 1, 1 << m):
-            assert FxR.from_int(a, m, p).to_int() == a
+            assert FxR.from_int(a, m=m, p=p).to_int() == a
     print("test_from_int_to_int_roundtrip: PASS")
 
 
@@ -513,10 +513,10 @@ def test_fxc_mul_ulp_bound_randomized(n_iter: int = 10000, seed: int = 7):
     worst = 0.0
     for _ in range(n_iter):
         a = FxC.from_complex(
-            complex(random.uniform(-0.9, 0.9), random.uniform(-0.9, 0.9)), m_a, p
+            complex(random.uniform(-0.9, 0.9), random.uniform(-0.9, 0.9)), m=m_a, p=p
         )
         b = FxC.from_complex(
-            complex(random.uniform(-0.9, 0.9), random.uniform(-0.9, 0.9)), m_b, p
+            complex(random.uniform(-0.9, 0.9), random.uniform(-0.9, 0.9)), m=m_b, p=p
         )
         c = a * b
         exact = a.to_complex() * b.to_complex()

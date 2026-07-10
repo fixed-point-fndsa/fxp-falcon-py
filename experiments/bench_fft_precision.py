@@ -89,7 +89,7 @@ def _fxr_to_mp(a):
 def _fft_fxp_p(coeffs, p: int):
     """FFT at precision p; returns list of mpmath.mpc values preserving full precision."""
     m_in = max(1, max(abs(x) for x in coeffs).bit_length())
-    f_fxp = [FxR.from_int(x, m_in, p) for x in coeffs]
+    f_fxp = [FxR.from_int(x, m=m_in, p=p) for x in coeffs]
     out = fft_fxp(f_fxp)
     return [mpmath.mpc(_fxr_to_mp(z.re), _fxr_to_mp(z.im)) for z in out]
 

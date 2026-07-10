@@ -64,7 +64,7 @@ def fft_fxp_wrapper(f):
     max_abs = max((abs(int(x)) for x in f), default=0)
     m_in = _smallest_m(max_abs)
     p = 63
-    f_fxr = [FxR.from_int(int(x), m_in, p) for x in f]
+    f_fxr = [FxR.from_int(int(x), m=m_in, p=p) for x in f]
     return [z.to_complex() for z in fft_fxp(f_fxr)]
 
 
@@ -76,7 +76,7 @@ def ifft_fxp_wrapper(f_fft):
     max_abs = max(abs(z) for z in f_fft)
     m_in = _smallest_m(max_abs)
     p = 63
-    f_fxc = [FxC.from_complex(z, m_in, p) for z in f_fft]
+    f_fxc = [FxC.from_complex(z, m=m_in, p=p) for z in f_fft]
     return [r.to_float() for r in ifft_fxp(f_fxc)]
 
 
@@ -85,8 +85,8 @@ def div_fft_fxp_wrapper(f_fft, g_fft, m_out):
     m_f = _smallest_m(max(abs(z) for z in f_fft))
     m_g = _smallest_m(max(abs(z) for z in g_fft))
     p = 63
-    f_fxc = [FxC.from_complex(z, m_f, p) for z in f_fft]
-    g_fxr = [FxR.from_float(z.real, m_g, p) for z in g_fft]   # PolyR divisor
+    f_fxc = [FxC.from_complex(z, m=m_f, p=p) for z in f_fft]
+    g_fxr = [FxR.from_float(z.real, m=m_g, p=p) for z in g_fft]   # PolyR divisor
     return [z.to_complex() for z in div_fft_fxp(f_fxc, g_fxr, m_out)]
 
 

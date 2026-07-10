@@ -51,7 +51,9 @@ def ffsampling_fxp(t: list[PolyC], tree: FFLDLTree,
         # drift if Lemma 13 premises ever break (e.g. n=1024, larger γ_root).
         assert abs(z0) < (1 << m_sign) and abs(z1) < (1 << m_sign), \
             f"|z|={max(abs(z0), abs(z1))} ≥ 2^{m_sign}"
-        return [[FxC.from_int(z0, m_sign, 63)], [FxC.from_int(z1, m_sign, 63)]]
+        p = t[0][0].p                       # follow the target's precision
+        return [[FxC.from_int(z0, m=m_sign, p=p)],
+                [FxC.from_int(z1, m=m_sign, p=p)]]
 
     l10_fft, tree0, tree1 = tree
 

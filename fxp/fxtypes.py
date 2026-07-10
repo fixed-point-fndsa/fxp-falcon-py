@@ -68,7 +68,7 @@ def _bankers_shift(x: int, n: int) -> int:
 
 
 @beartype
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FxR:
     """
     Real fixed-point number in FX_{m,p}.
@@ -78,6 +78,9 @@ class FxR:
     `slots=True`: a value type built by the million in the FFT — no per-instance
     __dict__ (less memory, faster attribute access). `frozen=True`: immutable
     value semantics, so an invariant can't be broken by a later field assignment.
+    `kw_only=True`: the three fields are all `int`, so a positional swap (x/m in
+    particular) would be silently accepted; naming them is mandatory. The `from_*`
+    constructors below take m, p keyword-only for the same reason.
     """
 
     x: int
@@ -93,12 +96,12 @@ class FxR:
     # ---- constructors -----------------------------------------------
 
     @classmethod
-    def from_int(cls, a: int, m: int, p: int) -> FxR:
+    def from_int(cls, a: int, *, m: int, p: int) -> FxR:
         """Exact embedding of an integer a with |a| < 2^m."""
         return cls(x=a << (p - m), m=m, p=p)
 
     @classmethod
-    def from_float(cls, a: float, m: int, p: int) -> FxR:
+    def from_float(cls, a: float, *, m: int, p: int) -> FxR:
         """Round-to-nearest-even of a into FX_{m,p}."""
         return cls(x=round(ldexp(a, p - m)), m=m, p=p)
 
@@ -147,9 +150,13 @@ class FxR:
 
 
 @beartype
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FxC:
     """Complex fixed-point number in cFX_{m,p}: two FxRs with same (m,p).
+
+    `kw_only=True`: `re` and `im` share a type, so a positional swap would be
+    silently accepted and would conjugate the value — nothing downstream could
+    catch it. Naming them is mandatory.
 
     Convention: `m` bounds the complex modulus, i.e. |z|^2 = Re^2 + Im^2
     < 2^{2m}. This is STRICTLY TIGHTER than bounding each component
@@ -195,16 +202,16 @@ class FxC:
     # ---- constructors -----------------------------------------------
 
     @classmethod
-    def from_complex(cls, z: complex, m: int, p: int) -> FxC:
+    def from_complex(cls, z: complex, *, m: int, p: int) -> FxC:
         return cls(
-            re=FxR.from_float(z.real, m, p),
-            im=FxR.from_float(z.imag, m, p),
+            re=FxR.from_float(z.real, m=m, p=p),
+            im=FxR.from_float(z.imag, m=m, p=p),
         )
 
     @classmethod
-    def from_int(cls, a: int, m: int, p: int) -> FxC:
+    def from_int(cls, a: int, *, m: int, p: int) -> FxC:
         """Exact embedding of an integer a as FxC (zero imaginary part)."""
-        return cls(re=FxR.from_int(a, m, p), im=FxR(x=0, m=m, p=p))
+        return cls(re=FxR.from_int(a, m=m, p=p), im=FxR(x=0, m=m, p=p))
 
     # ---- arithmetic -------------------------------------------------
 
