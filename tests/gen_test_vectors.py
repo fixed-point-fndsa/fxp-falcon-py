@@ -2,8 +2,9 @@
 Generate golden test vectors for the fixed-point transition.
 
 Imports from the local falcon_ref/ tree and writes JSON files under
-tests/test_vectors/. Run only when fxp/ is in a known-good state:
-this captures its current outputs as the new oracle. Otherwise the
+tests/test_vectors/. The oracles are the float64 outputs of the
+falcon_ref/ reference — run this only when that reference is in a
+known-good state (regenerating re-bases the oracle). Otherwise the
 committed JSON files in test_vectors/ are the source of truth used by
 check_test_vectors.py.
 

@@ -4,8 +4,9 @@ fxp ffsampling path.
 
 Section 5.1 tweak: replace the ffsampling input `t = (−c·F/q, c·f/q)`
 (large, ~√n·γ_FG in inf-norm) by its fractional part `t_frac` with
-entries in [−1/2, 1/2] (after FFT, ~√(n/12)·√(2 ln n)). Lemma 14 gives
-distributional equivalence. Two target builders, via `use_tweak`:
+entries in [−1/2, 1/2] (after FFT, ~√(n/12)·√(2 ln n)). Lemma 10
+(lem:sign) gives distributional equivalence. Two target builders, via
+`use_tweak`:
 
     USE_TWEAK_STD (0) : standard target, no tweak.
     USE_TWEAK_NTT (1) : Section-5.1 NTT-exact tweak.
@@ -135,7 +136,8 @@ def _reconstruct_s_int(sk, point, z_int, qt=None):
         s = (c, 0) − z'·B0 = (c − z'0·g − z'1·G,  z'0·f + z'1·F)  mod± q,
 
     with z' = z (standard target) or z' = z + t_int (tweak: z_std = z_tw +
-    t_int, Lemma 14). Everything is mod-q NTT (`mul_zq`) + centered lift: the
+    t_int, Lemma 10 / lem:sign). Everything is mod-q NTT (`mul_zq`) +
+    centered lift: the
     lift is exact iff ‖s‖_∞ < q/2, guaranteed by |s_i| ≤ τσ ≈ 2323 < q/2 =
     6144 (s ~ D_{coset,σ}, lem:upper-dot-product; the 2^-λ failure would be a
     ±q shift that explodes the ‖s‖² ≤ β² check → plain retry, never silent).
@@ -200,7 +202,7 @@ def sample_preimage(sk: SecretKey, point: list[int], use_tweak: int = USE_TWEAK_
 
     `use_tweak` selects the target builder (STD = standard target, NTT =
     Section-5.1 NTT-exact tweak; see module docstring). The two are
-    distributionally equivalent (Lemma 14) but diverge sporadically by
+    distributionally equivalent (Lemma 10, lem:sign) but diverge sporadically by
     float ULP at the LTYZ-fragile samplerz positions.
 
     use_fxp_ffsampling=True runs ffsampling_fxp + samplerz_fxp instead of

@@ -92,10 +92,11 @@ def derive(p: Params) -> dict:
     # ffsampling (uniform budgets; Lemma 13 tail bounds, treated as sups).
     add("M_SIGN_DEFAULT", p.n / 2 + drift, False, "n/2 + drift", "Lemma 13 (tweak)")
     add("M_SIGN_STD", p.n * (p.q - 1) * p.gamma_FG / p.q + drift, False,
-        "n*gamma_FG + drift", "Lemma 13 (std)")
+        "n*gamma_FG*(q-1)/q + drift", "Lemma 13 (std)")
     # (No reconstruction budget: s = (c, 0) − z'·B0 is computed in pure
     # integer arithmetic — see `sign_tweak._reconstruct_s_int`.)
-    # samplerz.
+    # samplerz. lem:samplerz states 19.5 (loose; the tight bound is 19 in
+    # floor mode, 18.5 in round mode — same m_min either way).
     add("M_SZ_DIFF", 19.5, False, "|z_int - r| < 19.5", "lem:samplerz")
 
     d["_tau"], d["_A_child"], d["_drift"] = tau, a_child, drift

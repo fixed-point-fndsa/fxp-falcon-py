@@ -463,8 +463,7 @@ class SecretKey:
         upstream entry point (https://github.com/tprest/falcon.py).
       - `SecretKey(n)` is a backward-compat shim used by the fxp module
         and the per-experiment scripts; it also serves as the natural
-        owner of per-key fxp caches (`_B0_fft_fxp`, `_fxp_tree`,
-        `_F_zq`, `_f_zq`, ...).
+        owner of the per-key fxp caches (`_B0_fft_fxp`, `_fxp_tree`).
     """
 
     def __init__(self, n: int, polys: list[list[int]] | None = None):

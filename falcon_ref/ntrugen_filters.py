@@ -2,14 +2,14 @@
 Paper-aligned NTRUGen rejection predicates for Falcon-512 (n=512, q=12289).
 
 Branched into `ntrugen.py:ntru_gen` so every returned key satisfies the four
-paper Checks. The fxp m-budgets in `fxp/sign_tweak.py` (M_D=18, M_L10_ROOT=5,
-m_sign=21/18) assume these bounds; a key violating them would overflow the
-fixed-point format (`|x| < 2^p`).
+paper Checks. The fxp m-budgets in `fxp/m_budgets.py` (M_D=18, M_L10_ROOT=5,
+M_SIGN_STD/DEFAULT=21/18) assume these bounds; a key violating them would
+overflow the fixed-point format (`|x| < 2^p`).
 
-    γ_fg     = 255    ‖FFT(f,g)‖_∞        (Check 1) → m_B_fg = 8 (strict bound)
-    γ_hybrid = 4      α_hybrid(f,g)       (Check 2) → m_D = 18 (Lemma 9)
-    γ_FG     = 3500   ‖FFT(F,G)‖_∞        (Check 3) → m_sign = 21
-    γ_root   = 24     ‖FFT(L_10_root)‖_∞  (Check 4) → M_L10_ROOT = 5
+    γ_fg     = 255    ‖FFT(f,g)‖_∞        (Check 1b) → M_B_FG = 8 (strict bound)
+    γ_hybrid = 4      α_hybrid(f,g)       (Check 2)  → M_D = 18 (Lemma 9)
+    γ_FG     = 3500   ‖FFT(F,G)‖_∞        (Check 3)  → M_SIGN_STD = 21
+    γ_root   = 24     ‖FFT(L_10_root)‖_∞  (Check 4)  → M_L10_ROOT = 5
 """
 
 from fft import fft, adj_fft, mul_fft, add_fft, div_fft
@@ -18,7 +18,7 @@ from fft import fft, adj_fft, mul_fft, add_fft, div_fft
 Q = 12289
 
 # Paper thresholds (see module docstring for derivation).
-GAMMA_FG_512 = 255        # γ_fg, Check 1 (strict, to give m_B_fg = 8 headroom)
+GAMMA_FG_512 = 255        # γ_fg, Check 1b (strict, to give M_B_FG = 8 headroom)
 GAMMA_HYBRID = 4          # γ_hybrid, Check 2
 GAMMA_FG_UPPER_512 = 3500  # γ_FG (Falcon-512), Check 3
 GAMMA_ROOT = 24           # γ_root, Check 4
@@ -35,10 +35,11 @@ def _norm_inf_fft(coeffs_fft) -> float:
 
 
 # --------------------------------------------------------------------- #
-# Check 1 helper: ‖FFT(f, g)‖_∞ < γ_fg.
-# Branched into `ntru_gen` after `gs_norm` (cheapest pre-filter) and before
-# Check 2 (the more expensive α_hybrid). γ_fg = 255 is the strict bound
-# behind M_B_FG = 8 (the fft(f), fft(g) row tags in `_build_B0_fft_fxp_cache`).
+# Check 1b helper: ‖FFT(f, g)‖_∞ < γ_fg.
+# Branched into `ntru_gen` as the FIRST filter (before α_hybrid and the
+# gs_norm / Check 1a test — see the order note in `ntru_gen`). γ_fg = 255 is
+# the strict bound behind M_B_FG = 8 (the fft(f), fft(g) row tags in
+# `_build_B0_fft_fxp_cache`).
 # --------------------------------------------------------------------- #
 
 
@@ -95,7 +96,7 @@ def norm_fft_FG(F, G) -> float:
 def norm_fft_k(f, g, F, G) -> float:
     """Return ‖FFT(k)‖_∞ for k = (F·adj(f) + G·adj(g)) / (f·adj(f) + g·adj(g)).
     k coincides with L_10 at the ffLDL root; γ_root is the bound that
-    governs `M_L10_ROOT` in `fxp/sign_tweak.py`."""
+    governs `M_L10_ROOT` in `fxp/m_budgets.py`."""
     f_fft = fft([float(c) for c in f])
     g_fft = fft([float(c) for c in g])
     F_fft = fft([float(c) for c in F])

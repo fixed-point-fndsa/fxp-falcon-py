@@ -4,15 +4,16 @@ reference). Mirrors the float version but uses FxR/FxC throughout and
 calls samplerz_fxp at the leaves.
 
 Format:
-  - t, z FxC polys at (M_SIGN, 63); M_SIGN = 18 for Falcon-512 from
-    Lemma 13 with Cholesky Lemma 12 + γ_root = 24 (drift < 2^18).
+  - t, z FxC polys at (m_sign, 63); m_sign = M_SIGN_DEFAULT = 18 (tweak) or
+    M_SIGN_STD = 21 (std) for Falcon-512, from Lemma 13 (lem:ffsampling)
+    with Lemma 12 (lem:inverse-square-root) + γ_root = 24 (drift < 2^18).
   - Tree from `keygen_fxp` / `normalize_tree_fxp`:
       L_10 at root     : m = 5    (NTRUGen Check 4: ‖L_10_root‖_∞ ≤ γ_root = 24)
       L_10 non-root    : m = 0    (|L_10| < 1 strict by Cauchy-Schwarz)
       [dss_i, ccs_i] leaf : m = 0 (precomputed samplerz constants, both < 1)
-  - `diff · L_10` is emitted straight at M_SIGN via `mul_fft_to` (fused
+  - `diff · L_10` is emitted straight at m_sign via `mul_fft_to` (fused
     multiply-and-retag, single rounding); the value fits well below
-    2^{M_SIGN} even at the root where m_L10 = 5 (Lemma 13 drift).
+    2^{m_sign} even at the root where m_L10 = 5 (Lemma 13 drift).
 
 Tree shape:
   internal : [L_10_poly, subtree_left, subtree_right]

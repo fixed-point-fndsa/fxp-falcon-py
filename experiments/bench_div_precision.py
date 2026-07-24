@@ -209,7 +209,7 @@ def plot(results):
     ax.set_ylabel(r"$\max_i\, |(f/g)_i^{\mathrm{got}} - (f/g)_i^{\mathrm{ref}}|$")
     ax.set_title(
         "Coefficient-wise complex division precision: FP vs FxP-63 vs FxP-127\n"
-        "f = random small-coef polynomial, g = $16 + x$; error vs 256-bit mpmath"
+        "f = random small-coef polynomial, g = $q + 4000x$; error vs 256-bit mpmath"
     )
     ax.grid(True, which="both", alpha=0.3)
     ax.legend(loc="lower right", fontsize=9)

@@ -258,7 +258,7 @@ def samplerz_fxp(mu: FxR, dss: FxR, ccs: FxR,
             sigma_correction_int = z0 * z0 - z0              # ≤ 18·17 = 306
 
         # x = (z_int − r)²·dss − sigma_correction·INV_2SIGMA2. Bounds:
-        #   |z_int − r| ≤ 19.5 < 2^M_SZ_DIFF; squared → 2·M_SZ_DIFF; ·dss keeps it
+        #   |z_int − r| ≤ 19 < 2^M_SZ_DIFF; squared → 2·M_SZ_DIFF; ·dss keeps it
         #   sigma_correction ≤ 324 < 2^10; built at 2·M_SZ_DIFF to match term1
         diff = FxR.from_int(z_int, m=M_SZ_DIFF, p=_P) - r_fxr
         term1 = (diff * diff) * dss                       # m = 2·M_SZ_DIFF

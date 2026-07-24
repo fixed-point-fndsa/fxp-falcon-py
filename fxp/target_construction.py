@@ -73,8 +73,8 @@ def _build_t_tweaked(sk, point):
     """Section-5.1 NTT-exact tweak in float64: q·t_frac = (−c·F, c·f) mod^± q
     via NTT (exact integers), then t_frac = FFT(q·t_frac) / q. Returns
     (t_frac_fft, [qt0, qt1]); the qt integer polys drive the equivalent
-    z_std = z_tweaked + t_int relation. Lemma 14 gives distributional
-    equivalence with the standard target."""
+    z_std = z_tweaked + t_int relation. Lemma 10 (lem:sign) gives
+    distributional equivalence with the standard target."""
     q = FALCON_Q
     qt0, qt1 = _build_qt(sk, point)
     t0_fft = [z / q for z in fft([float(c) for c in qt0])]

@@ -25,6 +25,7 @@ scripts/callgraph_fxp*.svg
 # The pgfplots templates under experiments/figures/latex/ are tracked.
 experiments/figures/*.png
 experiments/figures/*.pdf
+experiments/figures/latex/*.log
 experiments/tables/
 
 # OS / editor

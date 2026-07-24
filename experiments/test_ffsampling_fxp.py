@@ -109,8 +109,8 @@ def run_kat_test(sk, tree_fxp, n_trials=50, seed_start=1, m_sign=M_SIGN_DEFAULT,
         else:
             t_ref = build_t_standard_float(sk, c)
 
-        # Convert to fxp (m = m_sign, p = 63). m=1 suffices for the tweaked case
-        # (||t_frac|| ~ sqrt(n/12)*sqrt(2 ln n) < 2^5) but m_sign=18 also works.
+        # Convert to fxp (m = m_sign, p = 63). m=5 suffices for the tweaked case
+        # (||t_frac_fft|| ~ sqrt(n/12)*sqrt(2 ln n) < 2^5) but m_sign=18 also works.
         t_fxp = [complex_poly_to_fxc(t_ref[0], m=m_sign),
                  complex_poly_to_fxc(t_ref[1], m=m_sign)]
 

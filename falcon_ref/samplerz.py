@@ -22,10 +22,11 @@ or per call:
             paper's keygen restriction ``‖(g, −f)‖² odd``, so this shifts
             the round-off-sensitive locus out of harm's way.
 
-Both modes use the same rejection formula
-``x = (z − r)²·dss − z₀²·INV_2SIGMA2`` and the same berexp+approxexp.
-The only differences are the s/r split convention, the bimodal extension,
-and the base RCDT (different center). See ``scripts/generate_rcdt.py``
+Both modes share the berexp+approxexp rejection machinery on
+``x = (z − r)²·dss − σ_corr·INV_2SIGMA2``; the differences are the s/r
+split convention, the bimodal extension, the base RCDT (different center),
+and the correction term σ_corr (z₀² for floor, z₀² − z₀ for round).
+See ``scripts/generate_rcdt.py``
 for how the two RCDTs are derived (Howe-Prest-Ricosset-Rossi 2019-1411
 §5.2 rounding procedure, applied to the half-Gaussian centered at 0
 resp. 1/2).

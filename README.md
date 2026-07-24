@@ -6,7 +6,7 @@ Reference implementation of the fixed-point arithmetic stack from the paper
 
 - the high-level Python model of the proposed fxp pipeline (`fxp/`),
 - Prest's `falcon.py` reference implementation (`falcon_ref/`),
-- 52 unit tests + ~60 numerical test vectors (`tests/`),
+- unit tests + numerical test vectors (`tests/`),
 - validation + precision-benchmark scripts (`experiments/`),
 - the helper scripts that generate the FFT twiddle tables (`scripts/`).
 
@@ -71,7 +71,7 @@ automatically — `from falcon import SecretKey` then resolves to Prest's
 
 ```bash
 make test                                  # fxp unit tests + numerical KAT (core deps)
-python -m pytest tests/test_fxtypes.py     # 52 unit tests, FxR/FxC arithmetic (~0.6 s)
+python -m pytest tests/test_fxtypes.py     # FxR/FxC arithmetic unit tests (~0.6 s)
 python tests/check_test_vectors.py         # ~60 numerical KAT: FFT/ffLDL/division (~0.6 s)
 python tests/smoke_test_e2e.py --fast      # KAT-only integration runner (~1 s)
 ```

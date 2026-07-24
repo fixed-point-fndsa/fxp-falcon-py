@@ -113,7 +113,7 @@ def normalize_tree_fxp(tree: FFLDLTree, inv_sigma: FxR, sigmin: FxR,
     if len(tree[1]) == 3:  # internal node
         return [tree[0], normalize_tree_fxp(tree[1], *args),
                          normalize_tree_fxp(tree[2], *args)]
-    L10, D00, D11 = tree  # pre-leaf: replace D_ii polys with [σ_i, 0]
+    L10, D00, D11 = tree  # pre-leaf: replace D_ii polys with [dss_i, ccs_i]
     return [L10, _normalize_leaf_poly(D00, *args),
                  _normalize_leaf_poly(D11, *args)]
 

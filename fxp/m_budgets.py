@@ -57,17 +57,19 @@ M_POINT_COEF = 14
 # Dividing by q before the FFT keeps the std chain small (fft(c/q) at m=9,
 # products ≤ 2^21); the former (ĉ·d̂)·INV_Q route peaked at a transient m=34.
 M_CQ_COEF = 0
-# FFT tag policy. `fft_fxp` has two modes (see its docstring):
-#   GROWING  (m=None): m_out = m_in + log₂n, the n=2 base case paying the
+# FFT tag policy. `fft_fxp` is single-tag either way; its `certified` flag
+# says where that tag comes from (see its docstring):
+#   certified=False: m_out = m_in + log₂n, the n=2 base case paying the
 #     Pythagorean √2 — TOTAL, provable for any input via G(N) ≤ N/√2 < N.
 #     Used where the output is not certified: c/q (M_CQ_COEF) and qt
 #     (M_QT_COEF), loaded at their tight coefficient bounds below.
-#   FIXED (m given): the whole transform runs at a certified output tag with
-#     no growth (‖sub-FFT‖ ≤ ‖FFT‖ keeps every level under it). Used for the
-#     B0 rows f,g / F,G AT their γ tags M_B_FG / M_B_FG_UP directly — so those
-#     rows have NO separate coefficient-load budget (the old M_B0_COEF_FG/_UP,
-#     removed 2026-07-08; the ‖f,g‖≤17, ‖F,G‖≤127 bounds only need to fit the
-#     γ tag for the load to be exact, which `test_keygen_bounds` pins).
+#   certified=True: the whole transform runs at the caller-certified output
+#     tag with no growth (‖sub-FFT‖ ≤ ‖FFT‖ keeps every level under it). Used
+#     for the B0 rows f,g / F,G AT their γ tags M_B_FG / M_B_FG_UP directly —
+#     so those rows have NO separate coefficient-load budget (the old
+#     M_B0_COEF_FG/_UP, removed 2026-07-08; the ‖f,g‖≤17, ‖F,G‖≤127 bounds
+#     only need to fit the γ tag for the load to be exact, which
+#     `test_keygen_bounds` pins).
 # Tweak target: qt = (−c·F, c·f) mod± q centered ⇒ |qt|_∞ ≤ q/2 < 2^13.
 M_QT_COEF = 13
 
@@ -97,7 +99,9 @@ M_B_FG_UP = 12   # c, d = fft(G), fft(−F) — γ_FG = 3500 < 2^12 (Check 3)
 # --------------------------------------------------------------------- #
 
 # Format of r = mu mod 1 and diff = z_int − r: |z_int − r| ≤ 19.5 < 2^5
-# (lem:samplerz: z_int ∈ [−18, 19], r ∈ [0, 1)). INTERFACE CONTRACT: mu must
+# (lem:samplerz's stated bound; the tight one is 19 — floor mode has
+# z_int ∈ [−18, 19] and r ∈ [0, 1), round mode gives ≤ 18.5 — same m either
+# way). INTERFACE CONTRACT: mu must
 # arrive with m ≥ M_SZ_DIFF so the r retag is an exact left-shift (asserted
 # at samplerz_fxp entry). The x = term1 − term2 format is NOT a free budget:
 # it is 2·M_SZ_DIFF by the mul tag rule (term2 is built there to match).

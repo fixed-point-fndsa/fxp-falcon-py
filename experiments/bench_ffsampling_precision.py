@@ -328,9 +328,9 @@ def _walker(t_fp, t_fxp, t_mp, tree_fp, tree_fxp, tree_mp,
 
     # Record per-coefficient errors at this level. We append every
     # |t0p[i] - t0p_mp[i]| so the driver can later compute BOTH the mean
-    # and the max-over-(coeff, trial). Earlier versions stored only the
+    # and the max-over-(coeff, trial). (Earlier versions stored only the
     # per-call max, which conflated "median of per-trial-max" with
-    # "true mean error" — see experiments/README.md for the distinction.
+    # "true mean error".)
     for i in range(n):
         e_fp = float(mpmath.sqrt(
             (mpmath.mpf(t0p_fp[i].real) - t0p_mp[i].real) ** 2
@@ -370,7 +370,7 @@ def _walker(t_fp, t_fxp, t_mp, tree_fp, tree_fxp, tree_mp,
 # --------------------------------------------------------------------- #
 
 
-def run_trial(sk, G_mp, tree_fp, tree_fxp_by_p, tree_mp, m_sign, seed_int,
+def run_trial(sk, tree_fp, tree_fxp_by_p, tree_mp, m_sign, seed_int,
               p_target):
     # Deterministic message/salt.
     r = random.Random(seed_int)
@@ -436,7 +436,7 @@ def main(n_trials=1000):
         merged = {}
         t0 = time.time()
         for t in range(n_trials):
-            errs = run_trial(sk, G_mp, tree_fp, tree_fxp_by_p, tree_mp,
+            errs = run_trial(sk, tree_fp, tree_fxp_by_p, tree_mp,
                              m_sign, seed_int=100 + t, p_target=p)
             for lvl, d in errs.items():
                 merged.setdefault(lvl, {"fp": [], "fxp": []})
